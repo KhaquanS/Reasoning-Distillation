@@ -14,12 +14,12 @@ def main():
     parser = argparse.ArgumentParser()
     # Data
     parser.add_argument("--dataset", choices=["math500", "metamathqa", "mixture"], default="mixture")
-    parser.add_argument("--mix_ratio", type=float, default=0.7, help="ratio of math500 in mixture")
+    parser.add_argument("--mix_ratio", type=float, default=0.3, help="ratio of math500 in mixture")
     parser.add_argument("--max_length", type=int, default=256)
-    parser.add_argument("--batch_size", type=int, default=1)
+    parser.add_argument("--batch_size", type=int, default=2)
     parser.add_argument("--accum_steps", type=int, default=4)
     # Training
-    parser.add_argument("--epochs", type=int, default=5)
+    parser.add_argument("--epochs", type=int, default=2)
     parser.add_argument("--lr", type=float, default=1e-5)
     parser.add_argument("--min_lr", type=float, default=1e-6)
     parser.add_argument("--warmup_ratio", type=float, default=0.05)
