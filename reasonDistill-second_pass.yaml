@@ -1,0 +1,22 @@
+python scripts/train.py \
+  --dataset mixture \
+  --mix_ratio 0.7 \
+  --batch_size 2 \
+  --accum_steps 16 \
+  --epochs 2 \
+  --lr 2e-5 \
+  --min_lr 2e-6 \
+  --warmup_ratio 0.1 \
+  --weight_decay 0.01 \
+  --max_grad_norm 1.0 \
+  --adam_betas 0.9 0.95 \
+  --temperature 4.0 \
+  --alpha_kd 0.3 \
+  --alpha_align 0.3 \
+  --beta_ce 0.5 \
+  --max_length 256 \
+  --sae_checkpoint /path/to/sae.pt \
+  --reason_score_path /path/to/reasonscores.pt \
+  --checkpoint_dir ./checkpoints_math \
+  --cache_dir ./cache \
+  --seed 42
