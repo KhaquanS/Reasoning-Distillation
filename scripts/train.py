@@ -25,7 +25,7 @@ def main():
                         help="Distillation method to use")
     # Data
     parser.add_argument("--dataset", choices=["math500", "metamathqa", "mixture"], default="mixture")
-    parser.add_argument("--mix_ratio", type=float, default=0.7, help="ratio of math500 in mixture")
+    parser.add_argument("--mix_ratio", type=float, default=0.5, help="ratio of math500 in mixture")
     parser.add_argument("--max_length", type=int, default=256)
     parser.add_argument("--batch_size", type=int, default=2)
     parser.add_argument("--accum_steps", type=int, default=4)
