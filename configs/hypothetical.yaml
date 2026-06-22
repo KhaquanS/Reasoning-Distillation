@@ -1,6 +1,6 @@
 python scripts/train.py \
   --dataset mixture \
-  --mix_ratio 0.7 \
+  --mix_ratio 0.5 \
   --batch_size 2 \
   --accum_steps 16 \
   --epochs 2 \
