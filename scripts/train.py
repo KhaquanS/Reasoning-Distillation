@@ -1,9 +1,9 @@
 import argparse
 import torch
 from pathlib import Path
-from datasets.math500 import Math500Dataset
-from datasets.metamathqa import MetaMathQADataset
-from datasets.mixture import MixtureDataset
+from data_loaders.math500 import Math500Dataset
+from data_loaders.metamathqa import MetaMathQADataset
+from data_loaders.mixture import MixtureDataset
 from models.student_loader import load_teacher, load_student, load_tokenizer
 from models.sae_loader import load_sae, load_reasoning_neurons
 from models.aligner import ReasoningNeuronAligner
