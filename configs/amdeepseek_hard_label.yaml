@@ -1,0 +1,52 @@
+# Full AM-DeepSeek hard-label distillation.
+# Launch with:
+# python scripts/train.py --config configs/amdeepseek_hard_label.yaml
+
+experiment:
+  name: hard_label_amdeepseek_full
+  seed: 42
+
+data:
+  dataset: amdeepseek
+  max_samples: null
+  cache_dir: ./cache
+
+method:
+  name: hard_label
+
+model:
+  teacher: deepseek-ai/DeepSeek-R1-Distill-Llama-8B
+  student: meta-llama/Llama-3.2-1B # ADD EPOCH 5 CHECKPOINT
+  teacher_quantize_8bit: true
+  student_checkpoint: null
+
+alignment:
+  # Unused by hard_label, but kept explicit for config transparency.
+  teacher_align_layer: 19
+  student_align_layer: 10
+  target_norm: 64.0
+
+training:
+  # Effective tokens/update: 1 * 128 * 512 = 65,536.
+  max_length: 512
+  batch_size: 1
+  accum_steps: 128
+  epochs: 3
+
+  lr: 1.0e-5
+  min_lr: 1.0e-6
+  warmup_ratio: 0.03
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  adam_betas: [0.9, 0.95]
+
+loss:
+  temperature: 1.0
+  alpha_kd: 0.0
+  alpha_align: 0.0
+  beta_ce: 1.0
+
+logging:
+  checkpoint_dir: ./checkpoints/amdeepseek_hard_label
+  log_dir: ./logs/amdeepseek_hard_label
+  loss_log_entries_per_epoch: 1000
