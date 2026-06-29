@@ -54,6 +54,4 @@ loss:
 logging:
   checkpoint_dir: ./checkpoints/amdeepseek_full
   log_dir: ./logs/amdeepseek_full
-  # Target number of averaged loss rows per epoch in training_loss.csv.
-  # Example: 100,000 dataloader steps logs one averaged row per 100 steps.
-  loss_log_entries_per_epoch: 1000
+  loss_log_entries_per_epoch: 100 # number of enteries into the csv file for each epoch
