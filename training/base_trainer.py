@@ -10,6 +10,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM
+from utils.logging import AveragedCSVLogger
 
 
 class BaseTrainer:
@@ -152,9 +153,24 @@ class BaseTrainer:
                 self.scheduler.step()
 
         self.print_freq = max(1, steps_per_epoch // 10)
+        target_log_rows = getattr(self.config, "loss_log_entries_per_epoch", 1000)
+        log_dir = Path(getattr(self.config, "log_dir", self.config.checkpoint_dir))
+        self.loss_logger = AveragedCSVLogger(
+            log_dir / "training_loss.csv",
+            steps_per_epoch=steps_per_epoch,
+            target_rows_per_epoch=target_log_rows,
+            append=(self.start_epoch > 0),
+        )
+        print(
+            f"Logging averaged losses every {self.loss_logger.log_interval} steps "
+            f"to {self.loss_logger.log_path}"
+        )
 
-        for epoch in range(self.start_epoch, self.config.epochs):
-            self._run_epoch(epoch, loader)
+        try:
+            for epoch in range(self.start_epoch, self.config.epochs):
+                self._run_epoch(epoch, loader)
+        finally:
+            self.loss_logger.close()
 
         print(f"Training complete. Final checkpoint: {self.config.checkpoint_dir}/epoch_{self.config.epochs}")
 
@@ -173,6 +189,7 @@ class BaseTrainer:
 
             # Compute the scheme-specific loss
             loss = self._compute_loss(batch)
+            raw_loss = loss.detach().item()
 
             # Gradient accumulation
             loss = loss / self.config.accum_steps
@@ -187,12 +204,19 @@ class BaseTrainer:
                 self.scheduler.step()
                 self.optimizer.zero_grad()
 
-            epoch_loss += loss.item()
+            epoch_loss += raw_loss
             num_batches += 1
+            lr = self.scheduler.get_last_lr()[0]
+            self.loss_logger.add(
+                epoch=epoch,
+                step=step,
+                loss=raw_loss,
+                lr=lr,
+                force=((step + 1) == len(loader)),
+            )
 
             if step % self.print_freq == 0 and step > 0:
                 avg = epoch_loss / num_batches
-                lr = self.scheduler.get_last_lr()[0]
                 print(f"  step {step:5d} | loss {avg:.6f} | lr {lr:.2e}")
 
         avg_loss = epoch_loss / num_batches

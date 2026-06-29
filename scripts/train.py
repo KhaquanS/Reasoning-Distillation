@@ -89,6 +89,18 @@ def main():
         help="Resume student from checkpoint",
     )
     parser.add_argument("--checkpoint_dir", type=str, default="./checkpoints")
+    parser.add_argument(
+        "--log_dir",
+        type=str,
+        default=None,
+        help="Directory for CSV training logs. Defaults to checkpoint_dir.",
+    )
+    parser.add_argument(
+        "--loss_log_entries_per_epoch",
+        type=int,
+        default=1000,
+        help="Target number of averaged loss rows to write per epoch.",
+    )
     parser.add_argument("--cache_dir", type=str, default="./cache")
     parser.add_argument("--seed", type=int, default=42)
 
@@ -158,6 +170,8 @@ def main():
     config.alpha_align = args.alpha_align
     config.beta_ce = args.beta_ce
     config.checkpoint_dir = args.checkpoint_dir
+    config.log_dir = args.log_dir or args.checkpoint_dir
+    config.loss_log_entries_per_epoch = args.loss_log_entries_per_epoch
     config.max_length = args.max_length
 
     # Instantiate the appropriate trainer
