@@ -1,6 +1,14 @@
 import argparse
+import sys
 import torch
+import yaml
+from types import SimpleNamespace
 from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from data_loaders.math500 import Math500Dataset
 from data_loaders.metamathqa import MetaMathQADataset
 from data_loaders.mixture import MixtureDataset
@@ -15,103 +23,146 @@ from training import (
     ReasonDistillTrainer,
 )
 from utils.seed import set_seed
-import os
+
+
+OPTIONAL_CONFIG = {
+    "mix_ratio": None,
+    "max_samples": None,
+    "sae_checkpoint": None,
+    "reason_score_path": None,
+    "student_checkpoint": None,
+    "log_dir": None,
+    "loss_log_entries_per_epoch": 1000,
+    "teacher_align_layer": 19,
+    "student_align_layer": 10,
+    "target_norm": 64.0,
+    "reasoning_neuron_count": 196,
+    "teacher_quantize_8bit": True,
+}
+
+CONFIG_SECTIONS = {
+    "experiment": ["seed"],
+    "data": ["dataset", "mix_ratio", "max_samples", "cache_dir"],
+    "method": ["sae_checkpoint", "reason_score_path", "reasoning_neuron_count"],
+    "model": [
+        "teacher",
+        "student",
+        "student_checkpoint",
+        "teacher_quantize_8bit",
+    ],
+    "alignment": ["teacher_align_layer", "student_align_layer", "target_norm"],
+    "training": [
+        "max_length",
+        "batch_size",
+        "accum_steps",
+        "epochs",
+        "lr",
+        "min_lr",
+        "warmup_ratio",
+        "weight_decay",
+        "max_grad_norm",
+        "adam_betas",
+    ],
+    "loss": ["temperature", "alpha_kd", "alpha_align", "beta_ce"],
+    "logging": ["checkpoint_dir", "log_dir", "loss_log_entries_per_epoch"],
+}
+
+REQUIRED_CONFIG = [
+    "method",
+    "dataset",
+    "cache_dir",
+    "teacher",
+    "student",
+    "max_length",
+    "batch_size",
+    "accum_steps",
+    "epochs",
+    "lr",
+    "min_lr",
+    "warmup_ratio",
+    "weight_decay",
+    "max_grad_norm",
+    "adam_betas",
+    "temperature",
+    "alpha_kd",
+    "alpha_align",
+    "beta_ce",
+    "checkpoint_dir",
+    "seed",
+]
+
+VALID_METHODS = {"logit_kd", "fitnets", "hard_label", "reasondistill"}
+VALID_DATASETS = {"math500", "metamathqa", "mixture", "amdeepseek"}
+
+
+def _load_yaml_config(config_path):
+    with Path(config_path).open("r") as f:
+        raw_config = yaml.safe_load(f) or {}
+
+    if not isinstance(raw_config, dict):
+        raise ValueError("YAML config must be a mapping at the top level")
+
+    config = dict(OPTIONAL_CONFIG)
+    for section_name, keys in CONFIG_SECTIONS.items():
+        section = raw_config.get(section_name, {})
+        if section is None:
+            continue
+        if not isinstance(section, dict):
+            raise ValueError(f"Config section '{section_name}' must be a mapping")
+        for key in keys:
+            if key in section:
+                config[key] = section[key]
+
+    method_section = raw_config.get("method", {})
+    if isinstance(method_section, dict) and "name" in method_section:
+        config["method"] = method_section["name"]
+
+    missing = [key for key in REQUIRED_CONFIG if key not in config or config[key] is None]
+    if missing:
+        raise ValueError(f"Missing required config value(s): {', '.join(missing)}")
+
+    if config["method"] not in VALID_METHODS:
+        raise ValueError(f"Unknown method '{config['method']}'. Expected one of {sorted(VALID_METHODS)}")
+    if config["dataset"] not in VALID_DATASETS:
+        raise ValueError(f"Unknown dataset '{config['dataset']}'. Expected one of {sorted(VALID_DATASETS)}")
+    if config["dataset"] == "mixture" and config["mix_ratio"] is None:
+        raise ValueError("data.mix_ratio is required when data.dataset is 'mixture'")
+    if config["method"] == "reasondistill":
+        if config["sae_checkpoint"] is None or config["reason_score_path"] is None:
+            raise ValueError(
+                "method.sae_checkpoint and method.reason_score_path are required for reasondistill"
+            )
+    if len(config["adam_betas"]) != 2:
+        raise ValueError("training.adam_betas must contain exactly two values")
+
+    config["config_path"] = str(config_path)
+    return SimpleNamespace(**config)
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Train from a YAML experiment config. Training flags are intentionally disabled."
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        required=True,
+        help="Path to the YAML experiment config.",
+    )
+    args = parser.parse_args()
+    return _load_yaml_config(args.config)
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    # Method selection
-    parser.add_argument(
-        "--method",
-        type=str,
-        choices=["logit_kd", "fitnets", "hard_label", "reasondistill"],
-        default="reasondistill",
-        help="Distillation method to use",
-    )
+    args = parse_args()
 
-    # Data
-    parser.add_argument(
-        "--dataset",
-        choices=["math500", "metamathqa", "mixture", "amdeepseek"],
-        default="mixture",
-        help="Dataset to use for training",
-    )
-    parser.add_argument(
-        "--mix_ratio",
-        type=float,
-        default=0.7,
-        help="Ratio of math500 in mixture (only used when dataset=mixture)",
-    )
-    parser.add_argument(
-        "--max_samples",
-        type=int,
-        default=None,
-        help="Maximum number of samples to load from the dataset (useful for testing)",
-    )
-    parser.add_argument("--max_length", type=int, default=256)
-    parser.add_argument("--batch_size", type=int, default=2)
-    parser.add_argument("--accum_steps", type=int, default=4)
-
-    # Training
-    parser.add_argument("--epochs", type=int, default=5)
-    parser.add_argument("--lr", type=float, default=1e-5)
-    parser.add_argument("--min_lr", type=float, default=1e-6)
-    parser.add_argument("--warmup_ratio", type=float, default=0.05)
-    parser.add_argument("--weight_decay", type=float, default=0.01)
-    parser.add_argument("--max_grad_norm", type=float, default=1.0)
-    parser.add_argument("--adam_betas", type=float, nargs=2, default=[0.9, 0.95])
-
-    # KD hyperparameters (common)
-    parser.add_argument("--temperature", type=float, default=4.0)
-    parser.add_argument("--alpha_kd", type=float, default=0.5)
-    parser.add_argument("--alpha_align", type=float, default=0.5)
-    parser.add_argument("--beta_ce", type=float, default=0.5)
-
-    # Method-specific paths (only needed for ReasonDistill)
-    parser.add_argument(
-        "--sae_checkpoint",
-        type=str,
-        default=None,
-        help="Required for reasondistill",
-    )
-    parser.add_argument(
-        "--reason_score_path",
-        type=str,
-        default=None,
-        help="Required for reasondistill",
-    )
-
-    # Common paths
-    parser.add_argument(
-        "--student_checkpoint",
-        type=str,
-        default=None,
-        help="Resume student from checkpoint",
-    )
-    parser.add_argument("--checkpoint_dir", type=str, default="./checkpoints")
-    parser.add_argument(
-        "--log_dir",
-        type=str,
-        default=None,
-        help="Directory for CSV training logs. Defaults to checkpoint_dir.",
-    )
-    parser.add_argument(
-        "--loss_log_entries_per_epoch",
-        type=int,
-        default=1000,
-        help="Target number of averaged loss rows to write per epoch.",
-    )
-    parser.add_argument("--cache_dir", type=str, default="./cache")
-    parser.add_argument("--seed", type=int, default=42)
-
-    args = parser.parse_args()
     set_seed(args.seed)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     dtype = torch.bfloat16 if device == "cuda" else torch.float32
 
     # Load tokenizer
-    tokenizer = load_tokenizer("meta-llama/Llama-3.2-1B", cache_dir=args.cache_dir)
+    tokenizer = load_tokenizer(args.student, cache_dir=args.cache_dir)
 
     # Load datasets
     if args.dataset == "math500":
@@ -131,14 +182,14 @@ def main():
 
     # Load models
     teacher = load_teacher(
-        "deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
+        args.teacher,
         device,
         dtype,
-        quantize_8bit=True,
+        quantize_8bit=args.teacher_quantize_8bit,
         cache_dir=args.cache_dir,
     )
     student = load_student(
-        "meta-llama/Llama-3.2-1B",
+        args.student,
         device,
         dtype,
         cache_dir=args.cache_dir,
@@ -153,9 +204,9 @@ def main():
     config = Config()
     config.device = device
     config.dtype = dtype
-    config.teacher_align_layer = 19
-    config.student_align_layer = 10
-    config.target_norm = 64.0
+    config.teacher_align_layer = args.teacher_align_layer
+    config.student_align_layer = args.student_align_layer
+    config.target_norm = args.target_norm
     config.batch_size = args.batch_size
     config.accum_steps = args.accum_steps
     config.epochs = args.epochs
@@ -182,12 +233,12 @@ def main():
     elif args.method == "hard_label":
         trainer = HardLabelTrainer(student, teacher, tokenizer, config)
     elif args.method == "reasondistill":
-        if args.sae_checkpoint is None or args.reason_score_path is None:
-            raise ValueError(
-                "--sae_checkpoint and --reason_score_path required for reasondistill"
-            )
         sae = load_sae(args.sae_checkpoint, device, dtype)
-        reasoning_neurons = load_reasoning_neurons(args.reason_score_path, 196, device)
+        reasoning_neurons = load_reasoning_neurons(
+            args.reason_score_path,
+            args.reasoning_neuron_count,
+            device,
+        )
         aligner = ReasoningNeuronAligner(
             student_dim=student.config.hidden_size,
             teacher_dim=teacher.config.hidden_size,
