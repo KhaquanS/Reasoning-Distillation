@@ -194,8 +194,6 @@ def main():
         dtype,
         cache_dir=args.cache_dir,
     )
-    if args.student_checkpoint:
-        student = load_student(args.student_checkpoint, device, dtype, cache_dir=None)
 
     # Create config object
     class Config:
@@ -249,9 +247,10 @@ def main():
     else:
         raise ValueError(f"Unknown method: {args.method}")
 
-    # Optionally load checkpoint if resume is requested (via student_checkpoint)
+    # Optionally initialize module weights from a previous checkpoint.
+    # Optimizer, scheduler, and epoch state are rebuilt from the current YAML.
     if args.student_checkpoint and Path(args.student_checkpoint).exists():
-        trainer._load_checkpoint(args.student_checkpoint)
+        trainer.load_module_weights(args.student_checkpoint)
 
     trainer.train(train_ds)
 

@@ -44,7 +44,6 @@ class BaseTrainer:
 
         self.scheduler = None
         self.start_epoch = 0
-        self.scheduler_state = None
 
     def _collate(self, batch):
         """Collate function for DataLoader."""
@@ -72,24 +71,17 @@ class BaseTrainer:
         }, ckpt_dir / "trainer_state.pt")
         print(f"Checkpoint saved: {ckpt_dir}")
 
-    def _load_checkpoint(self, checkpoint_dir):
+    def load_module_weights(self, checkpoint_dir):
         """
-        Load checkpoint and restore state.
-        Sets self.start_epoch to the saved epoch number.
-        Returns updated student and aligner.
+        Load student and optional aligner weights from a checkpoint directory.
+
+        Optimizer, scheduler, and epoch state are intentionally not restored so
+        the current YAML config fully controls the new training run.
         """
         ckpt_dir = Path(checkpoint_dir)
         if not ckpt_dir.exists():
             raise FileNotFoundError(f"Checkpoint not found: {ckpt_dir}")
 
-        state_path = ckpt_dir / "trainer_state.pt"
-        if not state_path.exists():
-            raise FileNotFoundError(f"trainer_state.pt missing in {ckpt_dir}")
-
-        state = torch.load(state_path, map_location=self.config.device)
-        self.start_epoch = state["epoch"]  # already completed epoch
-
-        # Reload student
         student = AutoModelForCausalLM.from_pretrained(
             str(ckpt_dir),
             torch_dtype=self.config.dtype,
@@ -97,18 +89,15 @@ class BaseTrainer:
         )
         self.student.load_state_dict(student.state_dict())
 
-        # Reload aligner if present
         if self.aligner is not None:
             aligner_path = ckpt_dir / "aligner.pt"
             if aligner_path.exists():
                 self.aligner.load_state_dict(torch.load(aligner_path, map_location=self.config.device))
+            else:
+                print(f"No aligner.pt found in {ckpt_dir}; initialized a fresh aligner.")
 
-        # Restore optimizer
-        self.optimizer.load_state_dict(state["optimizer"])
-        # Store scheduler state for later restoration (after scheduler creation)
-        self.scheduler_state = state.get("scheduler", None)
-
-        print(f"Resumed from checkpoint: {ckpt_dir}, starting epoch {self.start_epoch}")
+        self.start_epoch = 0
+        print(f"Loaded module weights from checkpoint: {ckpt_dir}")
         return self.student, self.aligner
 
     def _compute_loss(self, batch):
@@ -140,17 +129,6 @@ class BaseTrainer:
             anneal_strategy="cos",
             final_div_factor=self.config.lr / self.config.min_lr
         )
-
-        # Restore scheduler state if available
-        if self.scheduler_state is not None:
-            self.scheduler.load_state_dict(self.scheduler_state)
-            self.scheduler_state = None
-        elif self.start_epoch > 0:
-            # Fast-forward scheduler
-            skip = (steps_per_epoch * self.start_epoch) // self.config.accum_steps
-            print(f"Fast-forwarding scheduler {skip} steps...")
-            for _ in range(skip):
-                self.scheduler.step()
 
         self.print_freq = max(1, steps_per_epoch // 10)
         target_log_rows = getattr(self.config, "loss_log_entries_per_epoch", 1000)
