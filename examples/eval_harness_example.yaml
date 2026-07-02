@@ -1,0 +1,45 @@
+models:
+  - name: deepseek-r1-distill-qwen-7b
+    checkpoint: deepseek-ai/DeepSeek-R1-Distill-Qwen-7B
+    dtype: bfloat16
+    device_map: auto
+    trust_remote_code: true
+
+  # Local distillation checkpoints saved by this repo should point at a
+  # save_pretrained directory, for example:
+  # - name: hard-label-epoch-3
+  #   checkpoint: ./checkpoints/amdeepseek_hard_label/epoch_3
+  #   tokenizer: ./checkpoints/amdeepseek_hard_label/epoch_3
+
+benchmarks:
+  - arc-c
+  - math500
+  - aime25
+  - gsm8k
+  - hellaswag
+  - mmlu
+  - gpqa
+
+output_dir: ./eval_outputs
+cache_dir: ./cache
+split: test
+max_samples: 25
+seed: 42
+
+generation:
+  cot: true
+  max_toks: 512
+  pass_at_k: 1
+  temperature: 0.0
+  top_p: 1.0
+  max_new_tokens: 128
+
+benchmark_options:
+  mmlu:
+    subject: all
+  gpqa:
+    subset: gpqa_diamond
+    split: train
+  hellaswag:
+    split: validation
+
