@@ -1,0 +1,39 @@
+models:
+  - name: reasondistill-epoch-2
+    checkpoint: ./checkpoints/amdeepseek_reasondistill/epoch_2
+    tokenizer: ./checkpoints/amdeepseek_reasondistill/epoch_2
+    dtype: bfloat16
+    device_map: auto
+    trust_remote_code: true
+
+benchmarks:
+  - arc-c
+  - math500
+  - aime25
+  - gsm8k
+  - hellaswag
+  - mmlu
+  - gpqa
+
+output_dir: ./eval_outputs/reasondistill_epoch_2
+cache_dir: ./cache
+split: test
+max_samples: null
+seed: 42
+
+generation:
+  cot: true
+  max_toks: 512
+  pass_at_k: 1
+  temperature: 0.0
+  top_p: 1.0
+  max_new_tokens: 128
+
+benchmark_options:
+  mmlu:
+    subject: all
+  gpqa:
+    subset: gpqa_diamond
+    split: train
+  hellaswag:
+    split: validation
