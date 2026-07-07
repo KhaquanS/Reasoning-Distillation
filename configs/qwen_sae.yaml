@@ -1,0 +1,45 @@
+# Train a ReasonDistill-compatible Sparse Autoencoder on the Qwen teacher.
+# Run:
+#   python scripts/train_sae.py --config configs/qwen_sae.yaml
+
+experiment:
+  seed: 42
+
+model:
+  teacher_model_id: deepseek-ai/DeepSeek-R1-Distill-Qwen-7B
+  # Zero-indexed teacher transformer layer used for SAE activations.
+  layer: 14
+  dtype: bfloat16
+  attn_implementation: null
+
+data:
+  dataset: amdeepseek
+  cache_dir: ./cache
+  max_samples: null
+  max_length: 1024
+
+sae:
+  latent_dim: null
+  expansion_factor: 16
+  sparsity_coefficient: 5.0
+  sparsity_warmup_fraction: 0.05
+
+training:
+  sequence_batch_size: 4
+  token_batch_size: 4096
+  max_train_tokens: 1000000000
+  lr: 5.0e-5
+  min_lr: 0.0
+  lr_decay_fraction: 0.20
+  weight_decay: 0.0
+  adam_betas: [0.9, 0.999]
+  max_grad_norm: 1.0
+  num_workers: 0
+
+logging:
+  checkpoint_dir: ./checkpoints/qwen_sae_layer14_16x
+  save_every_steps: 1000
+  log_every_steps: 50
+  log_every_samples: 1000
+  log_path: ./logs/qwen_sae_layer14_16x/sae_training_metrics.csv
+  resume_from: null
