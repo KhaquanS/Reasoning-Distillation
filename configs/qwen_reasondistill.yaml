@@ -5,7 +5,7 @@
 #   python scripts/train.py --config configs/qwen_reasondistill.yaml
 
 experiment:
-  name: reasondistill_qwen_layer14_512tok
+  name: reasondistill_qwen
   seed: 42
 
 data:
@@ -36,13 +36,13 @@ alignment:
   reason_rank_weight: 0.10
 
 training:
-  max_length: 512
-  batch_size: 1
-  accum_steps: 128
+  max_length: 1024
+  batch_size: 4
+  accum_steps: 32
   epochs: 3
 
-  lr: 1.0e-5
-  min_lr: 1.0e-6
+  lr: 2.0e-5
+  min_lr: 2.0e-6
   warmup_ratio: 0.03
   weight_decay: 0.01
   max_grad_norm: 1.0
@@ -55,6 +55,6 @@ loss:
   beta_ce: 0.3
 
 logging:
-  checkpoint_dir: ./checkpoints/qwen_reasondistill_layer14
-  log_dir: ./logs/qwen_reasondistill_layer14
-  loss_log_entries_per_epoch: 1000
+  checkpoint_dir: ./checkpoints/qwen_reasondistill
+  log_dir: ./logs/qwen_reasondistill
+  loss_log_entries_per_epoch: 100
