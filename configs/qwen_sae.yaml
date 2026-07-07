@@ -16,7 +16,7 @@ data:
   dataset: amdeepseek
   cache_dir: ./cache
   max_samples: null
-  max_length: 1024
+  max_length: 2048
 
 sae:
   latent_dim: null
