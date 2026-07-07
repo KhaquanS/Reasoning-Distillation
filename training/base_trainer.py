@@ -10,7 +10,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM
-from utils.logging import AveragedCSVLogger
+from utils.csv_logger import AveragedCSVLogger
 
 
 class BaseTrainer:
