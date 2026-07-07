@@ -15,7 +15,7 @@ model:
 data:
   dataset: amdeepseek
   cache_dir: ./cache
-  max_samples: 0.5M
+  max_samples: null
   max_length: 2048
 
 sae:
