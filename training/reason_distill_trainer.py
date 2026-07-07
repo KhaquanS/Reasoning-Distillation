@@ -11,7 +11,7 @@ from losses.task_loss import cross_entropy_loss
 
 class ReasonDistillTrainer(BaseTrainer):
     def __init__(self, student, teacher, tokenizer, sae, reasoning_neurons, aligner, config):
-        # aligner is the ReasoningNeuronAligner
+        # aligner is the ReasoningFeatureHead
         super().__init__(student, teacher, tokenizer, config, aligner=aligner)
         self.sae = sae
         self.reasoning_neurons = reasoning_neurons
@@ -21,7 +21,13 @@ class ReasonDistillTrainer(BaseTrainer):
             dec_norms = self.sae.decoder.weight.float().norm(dim=0)
 
         self.alignment_loss_fn = ReasoningAlignmentLoss(
-            sae, reasoning_neurons, dec_norms, config.target_norm
+            sae,
+            reasoning_neurons,
+            dec_norms,
+            config.target_norm,
+            active_threshold=config.reason_active_threshold,
+            presence_weight=config.reason_presence_weight,
+            rank_weight=config.reason_rank_weight,
         )
         self.alignment_loss_fn.aligner = self.aligner
 
@@ -49,7 +55,7 @@ class ReasonDistillTrainer(BaseTrainer):
         s_hidden = s_out.hidden_states[self.config.student_align_layer]
         s_logits = s_out.logits
 
-        # Alignment loss (reasoning neurons)
+        # Alignment loss (selected SAE reasoning features)
         align_loss = self.alignment_loss_fn(s_hidden, t_hidden, attn_mask.float())
 
         # KD loss

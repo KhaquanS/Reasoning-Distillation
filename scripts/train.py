@@ -15,7 +15,7 @@ from data_loaders.mixture import MixtureDataset
 from data_loaders.amdeepseek import AMDeepSeekDataset
 from models.student_loader import load_teacher, load_student, load_tokenizer
 from models.sae_loader import load_sae, load_reasoning_neurons
-from models.aligner import ReasoningNeuronAligner
+from models.aligner import ReasoningFeatureHead
 from training import (
     LogitKDTrainer,
     FitNetsTrainer,
@@ -36,6 +36,9 @@ OPTIONAL_CONFIG = {
     "teacher_align_layer": 19,
     "student_align_layer": 10,
     "target_norm": 64.0,
+    "reason_active_threshold": 0.0,
+    "reason_presence_weight": 0.25,
+    "reason_rank_weight": 0.10,
     "reasoning_neuron_count": 196,
     "teacher_quantize_8bit": True,
 }
@@ -50,7 +53,14 @@ CONFIG_SECTIONS = {
         "student_checkpoint",
         "teacher_quantize_8bit",
     ],
-    "alignment": ["teacher_align_layer", "student_align_layer", "target_norm"],
+    "alignment": [
+        "teacher_align_layer",
+        "student_align_layer",
+        "target_norm",
+        "reason_active_threshold",
+        "reason_presence_weight",
+        "reason_rank_weight",
+    ],
     "training": [
         "max_length",
         "batch_size",
@@ -205,6 +215,9 @@ def main():
     config.teacher_align_layer = args.teacher_align_layer
     config.student_align_layer = args.student_align_layer
     config.target_norm = args.target_norm
+    config.reason_active_threshold = args.reason_active_threshold
+    config.reason_presence_weight = args.reason_presence_weight
+    config.reason_rank_weight = args.reason_rank_weight
     config.batch_size = args.batch_size
     config.accum_steps = args.accum_steps
     config.epochs = args.epochs
@@ -237,9 +250,9 @@ def main():
             args.reasoning_neuron_count,
             device,
         )
-        aligner = ReasoningNeuronAligner(
+        aligner = ReasoningFeatureHead(
             student_dim=student.config.hidden_size,
-            teacher_dim=teacher.config.hidden_size,
+            num_reasoning_features=reasoning_neurons.numel(),
         ).to(device)
         trainer = ReasonDistillTrainer(
             student, teacher, tokenizer, sae, reasoning_neurons, aligner, config
