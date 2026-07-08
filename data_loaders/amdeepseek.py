@@ -34,9 +34,9 @@ class AMDeepSeekDataset(Dataset):
         """
         self.data = load_dataset(
             "a-m-team/AM-DeepSeek-R1-Distilled-1.4M",
+            "am_0.9M",
             split=split,
             cache_dir=cache_dir,
-            trust_remote_code=True
         )
 
         # Optionally limit the number of samples
