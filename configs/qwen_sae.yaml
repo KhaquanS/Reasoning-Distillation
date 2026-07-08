@@ -26,7 +26,7 @@ sae:
 
 training:
   sequence_batch_size: 128
-  token_batch_size: 2048
+  token_batch_size: 32768
   max_train_tokens: 900000000
   lr: 5.0e-5
   min_lr: 0.0
