@@ -41,6 +41,13 @@ class AMDeepSeekDataset(Dataset):
                 "messages": [{
                     "role": Value("string"),
                     "content": Value("string"),
+                    "info": {
+                        "source": Value("string"),
+                        "reference_answer": Value("string"),
+                        "test_case": Value("null"),
+                        "think_content": Value("string"),
+                        "answer_content": Value("string"),
+                    },
                 }],
             }),
         )
