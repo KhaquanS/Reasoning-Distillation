@@ -24,6 +24,9 @@ class AMDeepSeekDataset(Dataset):
     into a single 'text' field, matching the format expected by the training pipeline.
     """
 
+    DATASET_ID = "a-m-team/AM-DeepSeek-R1-Distilled-1.4M"
+    CONFIG_NAME = "am_0.9M"
+
     def __init__(self, split="train", cache_dir=None, max_samples=None):
         """
         Args:
@@ -33,23 +36,11 @@ class AMDeepSeekDataset(Dataset):
                 Useful for quick testing or subset selection.
         """
         self.data = load_dataset(
-            "a-m-team/AM-DeepSeek-R1-Distilled-1.4M",
-            "am_0.9M",
+            self.DATASET_ID,
+            self.CONFIG_NAME,
             split=split,
             cache_dir=cache_dir,
-            features=Features({
-                "messages": [{
-                    "role": Value("string"),
-                    "content": Value("string"),
-                    "info": {
-                        "source": Value("string"),
-                        "reference_answer": Value("string"),
-                        "test_case": Value("null"),
-                        "think_content": Value("string"),
-                        "answer_content": Value("string"),
-                    },
-                }],
-            }),
+            features=self._features(),
         )
 
         # Optionally limit the number of samples
@@ -94,6 +85,25 @@ class AMDeepSeekDataset(Dataset):
         text = user_content + "\n" + assistant_content
 
         return {"text": text}
+
+    @staticmethod
+    def _features():
+        # The dataset card documents test_case as a string. Some rows contain
+        # non-null test_case values, so declaring it as null makes Arrow fail
+        # during JSON import around row 87188.
+        return Features({
+            "messages": [{
+                "role": Value("string"),
+                "content": Value("string"),
+                "info": {
+                    "source": Value("string"),
+                    "reference_answer": Value("string"),
+                    "test_case": Value("string"),
+                    "think_content": Value("string"),
+                    "answer_content": Value("string"),
+                },
+            }],
+        })
 
     def __len__(self):
         return len(self.data)
