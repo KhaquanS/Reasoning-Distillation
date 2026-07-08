@@ -9,7 +9,7 @@ The dataset includes mathematics, code, scientific Q&A, and general chat tasks.
 https://huggingface.co/datasets/a-m-team/AM-DeepSeek-R1-Distilled-1.4M
 """
 
-from datasets import load_dataset
+from datasets import Features, Value, load_dataset
 from torch.utils.data import Dataset
 
 
@@ -37,6 +37,12 @@ class AMDeepSeekDataset(Dataset):
             "am_0.9M",
             split=split,
             cache_dir=cache_dir,
+            features=Features({
+                "messages": [{
+                    "role": Value("string"),
+                    "content": Value("string"),
+                }],
+            }),
         )
 
         # Optionally limit the number of samples
