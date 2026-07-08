@@ -25,9 +25,9 @@ sae:
   sparsity_warmup_fraction: 0.05
 
 training:
-  sequence_batch_size: 4
-  token_batch_size: 4096
-  max_train_tokens: 1000000000
+  sequence_batch_size: 16
+  token_batch_size: 2048
+  max_train_tokens: 900000000
   lr: 5.0e-5
   min_lr: 0.0
   lr_decay_fraction: 0.20
@@ -39,7 +39,7 @@ training:
 logging:
   checkpoint_dir: ./checkpoints/qwen_sae_layer14_16x
   save_every_steps: 1000
-  log_every_steps: 50
+  log_every_steps: 1000
   log_every_samples: 1000
   log_path: ./logs/qwen_sae_layer14_16x/sae_training_metrics.csv
   resume_from: null
