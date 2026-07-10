@@ -20,6 +20,7 @@ import argparse
 import sys
 from pathlib import Path
 from collections import defaultdict
+import math
 from tqdm import tqdm
 import torch
 import torch.nn.functional as F
@@ -35,7 +36,7 @@ from models.sae_loader import load_sae
 from utils.seed import set_seed
 
 
-# Reasoning vocabulary from the paper (Appendix A.1)[reference:1]
+# Reasoning vocabulary from the paper (Appendix A.1)
 REASONING_VOCABULARY = [
     "alternatively", " alternatively", "Alternatively", " Alternatively",
     "hmm", " hmm", "Hmm", " Hmm",
@@ -68,7 +69,7 @@ def build_reasoning_mask(input_ids, reasoning_token_ids):
     Build a boolean mask of shape (B, T) where True indicates a token position
     that is part of a reasoning phrase (including a 2-token left/right window).
 
-    The paper uses a window of 2 preceding and 3 subsequent tokens[reference:2].
+    The paper uses a window of 2 preceding and 3 subsequent tokens.
     """
     B, T = input_ids.shape
     device = input_ids.device
@@ -82,7 +83,7 @@ def build_reasoning_mask(input_ids, reasoning_token_ids):
         for b in range(B):
             for start in range(T - ids_len + 1):
                 if torch.equal(input_ids[b, start:start + ids_len], ids.to(device)):
-                    # Mark window: 2 preceding, 3 subsequent (paper setting)[reference:3]
+                    # Mark window: 2 preceding, 3 subsequent (paper setting)
                     left = max(0, start - 2)
                     right = min(T, start + ids_len + 3)
                     mask[b, left:right] = True
@@ -106,11 +107,11 @@ def compute_reason_score(
     """
     Compute ReasonScore for all SAE features.
 
-    Implements Equation 5 from the paper[reference:4]:
+    Implements Equation 5 from the paper:
         ReasonScore_i = (μ(i, D_R^W) / Σ_j μ(j, D_R^W)) * H_i^α
                       - (μ(i, D_{-R}^W) / Σ_j μ(j, D_{-R}^W))
 
-    where H_i is the entropy penalty (Equation 4)[reference:5].
+    where H_i is the entropy penalty (Equation 4).
     """
     sae.eval()
     teacher.eval()
@@ -176,9 +177,12 @@ def compute_reason_score(
             # Flatten to (B*T, D) and encode with SAE
             flat_acts = activations.reshape(-1, activations.shape[-1]).float()
             # Normalize to target norm (as done in training)
-            target_norm = 64.0  # From config[reference:6]
+            target_norm = 64.0  # From config
             flat_norm = flat_acts.norm(dim=-1, keepdim=True).clamp(min=1e-8)
             flat_acts_normed = flat_acts * (target_norm / flat_norm)
+
+            # Cast to SAE's dtype to avoid dtype mismatch
+            flat_acts_normed = flat_acts_normed.to(sae.encoder.weight.dtype)
 
             # Encode with SAE
             latent = sae.encode(flat_acts_normed)  # (B*T, latent_dim)
@@ -241,7 +245,7 @@ def compute_reason_score(
         else:
             mu_per_word[idx] = torch.zeros(sae.latent_dim, device=device)
 
-    # Compute entropy penalty H_i (Equation 4)[reference:7]
+    # Compute entropy penalty H_i (Equation 4)
     # H_i = -1/log(|R|) * Σ_j p_i(r_j) * log(p_i(r_j))
     num_words = len(reasoning_token_ids)
     if num_words > 1:
@@ -255,7 +259,7 @@ def compute_reason_score(
     else:
         entropy = torch.ones(sae.latent_dim, device=device)
 
-    # Compute ReasonScore (Equation 5)[reference:8]
+    # Compute ReasonScore (Equation 5)
     # First term: (μ(i, D_R^W) / Σ_j μ(j, D_R^W)) * H_i^α
     sum_pos_all = mu_pos.sum().clamp(min=epsilon)
     term1 = (mu_pos / sum_pos_all) * (entropy ** alpha)
@@ -348,7 +352,7 @@ def main():
     sorted_indices = torch.argsort(scores, descending=True)
 
     # Save in the format expected by load_reasoning_neurons()
-    # The loader expects a dict with "sorted_indices" key[reference:9]
+    # The loader expects a dict with "sorted_indices" key
     output_path = Path(args.output_dir) / "reasonscore.pt"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save({"sorted_indices": sorted_indices}, output_path)
@@ -358,5 +362,4 @@ def main():
 
 
 if __name__ == "__main__":
-    import math
     main()
