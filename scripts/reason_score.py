@@ -64,31 +64,64 @@ def tokenize_reasoning_vocabulary(tokenizer):
     return token_ids
 
 
-def build_reasoning_mask(input_ids, reasoning_token_ids):
+def build_reasoning_masks(input_ids, reasoning_token_ids):
     """
-    Build a boolean mask of shape (B, T) where True indicates a token position
-    that is part of a reasoning phrase (including a 2-token left/right window).
+    Vectorized reasoning-token matching.
 
-    The paper uses a window of 2 preceding and 3 subsequent tokens.
+    The previous implementation did a Python triple loop
+    (patterns x batch x sequence position) calling torch.equal() per
+    position, which forces a GPU sync on every single call -- with 34
+    patterns, a batch of 10, and sequences up to 2048 tokens that's up to
+    ~700K syncing calls per batch. This version uses input_ids.unfold() to
+    build all sliding windows at once and compares them in a single batched
+    op per pattern, then uses advanced indexing (no host sync, no per-
+    position Python loop) to paint the resulting masks.
+
+    Returns:
+        windowed_mask: (B, T) bool tensor, True for token positions inside
+            a reasoning phrase's window (2 preceding, 3 subsequent tokens,
+            per the paper).
+        per_word_masks: list of (B, T) bool tensors, one per pattern in
+            reasoning_token_ids, True only at the pattern's exact token
+            positions (no window expansion) -- used for the per-word
+            entropy statistics.
     """
     B, T = input_ids.shape
     device = input_ids.device
-    mask = torch.zeros(B, T, dtype=torch.bool, device=device)
+    windowed_mask = torch.zeros(B, T, dtype=torch.bool, device=device)
+    per_word_masks = []
 
     for ids in reasoning_token_ids:
-        ids_len = len(ids)
-        if ids_len > T:
-            continue
-        # Slide window over sequence
-        for b in range(B):
-            for start in range(T - ids_len + 1):
-                if torch.equal(input_ids[b, start:start + ids_len], ids.to(device)):
-                    # Mark window: 2 preceding, 3 subsequent (paper setting)
-                    left = max(0, start - 2)
-                    right = min(T, start + ids_len + 3)
-                    mask[b, left:right] = True
+        ids_len = ids.numel()
+        word_mask = torch.zeros(B, T, dtype=torch.bool, device=device)
 
-    return mask
+        if ids_len <= T:
+            # (B, T - ids_len + 1, ids_len): every sliding window of length
+            # ids_len, compared against the pattern in one batched op.
+            windows = input_ids.unfold(dimension=1, size=ids_len, step=1)
+            matches = (windows == ids).all(dim=-1)  # (B, T - ids_len + 1)
+
+            if matches.any():
+                b_idx, start_idx = matches.nonzero(as_tuple=True)
+
+                # Exact pattern positions: [start, start + ids_len)
+                offsets = torch.arange(ids_len, device=device)
+                exact_b = b_idx.unsqueeze(1).expand(-1, ids_len).reshape(-1)
+                exact_pos = (start_idx.unsqueeze(1) + offsets.unsqueeze(0)).reshape(-1)
+                word_mask[exact_b, exact_pos] = True
+
+                # Windowed positions: [start - 2, start + ids_len + 3),
+                # clamped to sequence bounds.
+                win_offsets = torch.arange(-2, ids_len + 3, device=device)
+                win_pos = start_idx.unsqueeze(1) + win_offsets.unsqueeze(0)  # (matches, window_width)
+                valid = (win_pos >= 0) & (win_pos < T)
+                win_pos_clamped = win_pos.clamp(0, T - 1)
+                win_b = b_idx.unsqueeze(1).expand(-1, win_offsets.numel())
+                windowed_mask[win_b[valid], win_pos_clamped[valid]] = True
+
+        per_word_masks.append(word_mask)
+
+    return windowed_mask, per_word_masks
 
 
 def compute_reason_score(
@@ -116,8 +149,9 @@ def compute_reason_score(
     sae.eval()
     teacher.eval()
 
-    # Tokenize reasoning vocabulary
-    reasoning_token_ids = tokenize_reasoning_vocabulary(tokenizer)
+    # Tokenize reasoning vocabulary. Move to `device` once here rather than
+    # calling .to(device) inside the matching loop every batch/pattern.
+    reasoning_token_ids = [ids.to(device) for ids in tokenize_reasoning_vocabulary(tokenizer)]
     print(f"Reasoning vocabulary tokenized into {len(reasoning_token_ids)} patterns")
 
     # Accumulators
@@ -213,8 +247,9 @@ def compute_reason_score(
             # Reshape back to (B, T, latent_dim)
             latent = latent.reshape(B, T, -1)
 
-            # Build reasoning mask
-            reasoning_mask = build_reasoning_mask(input_ids, reasoning_token_ids)
+            # Build reasoning masks (windowed union + exact per-word) in a
+            # single vectorized pass -- see build_reasoning_masks() docstring.
+            reasoning_mask, per_word_masks = build_reasoning_masks(input_ids, reasoning_token_ids)
 
             # Separate reasoning vs non-reasoning tokens
             pos_mask = reasoning_mask & attn_mask.bool()
@@ -234,18 +269,10 @@ def compute_reason_score(
                 sum_neg += neg_feats.sum(dim=0).double()
                 count_neg += neg_feats.size(0)
 
-            # Per-word means for entropy
-            # For each reasoning word pattern, get its masked positions
-            for word_idx, ids in enumerate(reasoning_token_ids):
-                ids_len = len(ids)
-                if ids_len > T:
-                    continue
-                # Find positions where this word occurs (without window expansion for per-word)
-                word_mask = torch.zeros(B, T, dtype=torch.bool, device=device)
-                for b in range(B):
-                    for start in range(T - ids_len + 1):
-                        if torch.equal(input_ids[b, start:start + ids_len], ids.to(device)):
-                            word_mask[b, start:start + ids_len] = True
+            # Per-word means for entropy, reusing the exact-position masks
+            # build_reasoning_masks() already computed above (previously
+            # this re-ran the same O(B*T) matching loop from scratch here).
+            for word_idx, word_mask in enumerate(per_word_masks):
                 word_mask = word_mask & attn_mask.bool()
                 if word_mask.any():
                     word_flat = word_mask.reshape(-1)
