@@ -59,7 +59,12 @@ class ReasonDistillTrainer(BaseTrainer):
         align_loss = self.alignment_loss_fn(s_hidden, t_hidden, attn_mask.float())
 
         # KD loss
-        kd_loss = kl_div_loss(s_logits, t_logits, self.config.temperature)
+        kd_loss = kl_div_loss(
+            student_logits=s_logits,
+            teacher_logits=t_logits,
+            attention_mask=attn_mask,
+            temperature=self.config.temperature,
+        )
 
         # CE loss
         ce_loss = cross_entropy_loss(s_logits, labels, ignore_index=self.tokenizer.pad_token_id)
