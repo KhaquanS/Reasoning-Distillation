@@ -41,6 +41,7 @@ OPTIONAL_CONFIG = {
     "reason_rank_weight": 0.10,
     "reasoning_neuron_count": 196,
     "teacher_quantize_8bit": True,
+    "save_every_n_steps": None,
 }
 
 CONFIG_SECTIONS = {
@@ -74,7 +75,7 @@ CONFIG_SECTIONS = {
         "adam_betas",
     ],
     "loss": ["temperature", "alpha_kd", "alpha_align", "beta_ce"],
-    "logging": ["checkpoint_dir", "log_dir", "loss_log_entries_per_epoch"],
+    "logging": ["checkpoint_dir", "log_dir", "loss_log_entries_per_epoch", "save_every_n_steps"],
 }
 
 REQUIRED_CONFIG = [
@@ -144,6 +145,8 @@ def _load_yaml_config(config_path):
             )
     if len(config["adam_betas"]) != 2:
         raise ValueError("training.adam_betas must contain exactly two values")
+    if config["save_every_n_steps"] is not None and int(config["save_every_n_steps"]) <= 0:
+        raise ValueError("logging.save_every_n_steps must be a positive integer if set")
 
     config["config_path"] = str(config_path)
     return SimpleNamespace(**config)
@@ -235,6 +238,7 @@ def main():
     config.log_dir = args.log_dir or args.checkpoint_dir
     config.loss_log_entries_per_epoch = args.loss_log_entries_per_epoch
     config.max_length = args.max_length
+    config.save_every_n_steps = args.save_every_n_steps
 
     # Instantiate the appropriate trainer
     if args.method == "logit_kd":

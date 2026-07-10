@@ -44,6 +44,7 @@ class BaseTrainer:
 
         self.scheduler = None
         self.start_epoch = 0
+        self.global_step = 0  # counts optimizer steps (not batches), across epochs
 
     def _collate(self, batch):
         """Collate function for DataLoader."""
@@ -56,9 +57,19 @@ class BaseTrainer:
             return_tensors="pt"
         )
 
-    def _save_checkpoint(self, epoch):
-        """Save checkpoint including student, aligner (if any), optimizer, scheduler."""
-        ckpt_dir = Path(self.config.checkpoint_dir) / f"epoch_{epoch}"
+    def _save_checkpoint(self, epoch, global_step=None):
+        """
+        Save checkpoint including student, aligner (if any), optimizer, scheduler.
+
+        Epoch-end checkpoints are saved to `epoch_{epoch}`. Mid-epoch, step-based
+        checkpoints (triggered by config.save_every_n_steps) are saved to
+        `step_{global_step}` instead, so they don't collide with or overwrite
+        the epoch-end checkpoints.
+        """
+        if global_step is not None:
+            ckpt_dir = Path(self.config.checkpoint_dir) / f"step_{global_step}"
+        else:
+            ckpt_dir = Path(self.config.checkpoint_dir) / f"epoch_{epoch}"
         ckpt_dir.mkdir(parents=True, exist_ok=True)
         self.student.save_pretrained(str(ckpt_dir))
         self.tokenizer.save_pretrained(str(ckpt_dir))
@@ -67,7 +78,8 @@ class BaseTrainer:
         torch.save({
             "optimizer": self.optimizer.state_dict(),
             "scheduler": self.scheduler.state_dict() if self.scheduler else None,
-            "epoch": epoch
+            "epoch": epoch,
+            "global_step": self.global_step,
         }, ckpt_dir / "trainer_state.pt")
         print(f"Checkpoint saved: {ckpt_dir}")
 
@@ -181,6 +193,11 @@ class BaseTrainer:
                 self.optimizer.step()
                 self.scheduler.step()
                 self.optimizer.zero_grad()
+                self.global_step += 1
+
+                save_every_n_steps = getattr(self.config, "save_every_n_steps", None)
+                if save_every_n_steps and self.global_step % save_every_n_steps == 0:
+                    self._save_checkpoint(epoch, global_step=self.global_step)
 
             epoch_loss += raw_loss
             num_batches += 1

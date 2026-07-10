@@ -10,25 +10,23 @@ experiment:
 
 data:
   dataset: amdeepseek
-  max_samples: null
+  max_samples: 80_000 # ~160M tokens in total
   cache_dir: ./cache
 
 method:
   name: reasondistill
-  sae_checkpoint: ./checkpoints/qwen_sae_layer14_16x/sae.pt
-  reason_score_path: ./checkpoints/qwen_sae_layer14_16x/reasonscores.pt # replace after scoring SAE features
+  sae_checkpoint: ./checkpoints/qwen_sae_layer16_16x/step_8000/sae.pt
+  reason_score_path: ./checkpoints/qwen_sae_layer16_16x/reasonscores.pt # replace after scoring SAE features
   reasoning_neuron_count: 196
 
 model:
-  teacher: deepseek-ai/DeepSeek-R1-Distill-Qwen-7B
+  teacher: Qwen/Qwen3.5-4B
   student: Qwen/Qwen2.5-Math-1.5B
   teacher_quantize_8bit: true
   student_checkpoint: null
 
 alignment:
-  # Teacher targets come from SAE features at teacher layer 14.
-  teacher_align_layer: 14
-  # Student layer 14 predicts the selected reasoning SAE features.
+  teacher_align_layer: 16
   student_align_layer: 14
   target_norm: 64.0
   reason_active_threshold: 0.0
@@ -39,7 +37,7 @@ training:
   max_length: 2048
   batch_size: 4
   accum_steps: 32
-  epochs: 3
+  epochs: 1
 
   lr: 2.0e-5
   min_lr: 2.0e-6
@@ -54,7 +52,10 @@ loss:
   alpha_align: 0.2
   beta_ce: 0.3
 
+ 
 logging:
   checkpoint_dir: ./checkpoints/qwen_reasondistill
   log_dir: ./logs/qwen_reasondistill
   loss_log_entries_per_epoch: 1000
+  save_every_n_steps: 200
+ 
