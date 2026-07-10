@@ -1,303 +1,134 @@
-#!/usr/bin/env python3
-"""Plot smoothed loss traces from a training log."""
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
 
-import argparse
-import csv
-import json
-import math
-from pathlib import Path
+# Set global font sizes for readability
+plt.rcParams.update({
+    'font.size': 12,
+    'axes.titlesize': 14,
+    'axes.labelsize': 13,
+    'xtick.labelsize': 11,
+    'ytick.labelsize': 11,
+    'legend.fontsize': 11,
+    'figure.titlesize': 16
+})
 
+# Read the CSV file
+df = pd.read_csv('sae_training_matrics.csv')
 
-BOOKKEEPING_COLUMNS = {
-    "epoch",
-    "step",
-    "global_step",
-    "step_start",
-    "step_end",
-    "num_steps",
-    "lr",
-    "learning_rate",
-}
+# Convert token counts to millions for a cleaner x-axis
+x = df['tokens_start'] / 1e6  # in millions
 
-PAPER_COLORS = {
-    "smoothed": "#1f77b4",
-    "raw": "#b8c2cc",
-    "grid": "#d8dee9",
-    "text": "#1f2933",
-    "spine": "#9aa5b1",
-}
+# Create a 2x2 figure
+fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+ax1, ax2, ax3, ax4 = axes.flatten()
 
+# ------------------------------------------------------------
+# Subplot 1: Total Loss and Reconstruction Loss
+# ------------------------------------------------------------
+ax1.plot(x, df['avg_total_loss'], label='Total Loss', color='blue', linewidth=2)
+ax1.set_xlabel('Tokens seen (millions)')
+ax1.set_ylabel('Total Loss', color='blue')
+ax1.tick_params(axis='y', labelcolor='blue')
+ax1.grid(True, linestyle='--', alpha=0.6)
 
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Plot smoothed loss components for a distillation scheme."
-    )
-    parser.add_argument("pos_log_path", nargs="?", type=Path, help="Path to a CSV or JSONL loss log.")
-    parser.add_argument("pos_scheme", nargs="?", help="Scheme name to use in plot titles/output names.")
-    parser.add_argument("--log_path", type=Path, default=None, help="Path to a CSV or JSONL loss log.")
-    parser.add_argument("--scheme", default=None, help="Scheme name to use in plot titles/output names.")
-    parser.add_argument(
-        "-o",
-        "--output",
-        type=Path,
-        default=None,
-        help="Output image path. Defaults to <log_dir>/<scheme>_losses.png.",
-    )
-    parser.add_argument(
-        "--smooth",
-        type=float,
-        default=0.9,
-        help="EMA smoothing factor in [0, 1). Larger values are smoother.",
-    )
-    parser.add_argument(
-        "--show",
-        action="store_true",
-        help="Open an interactive plot window in addition to saving the image.",
-    )
-    args = parser.parse_args()
-    args.log_path = args.log_path or args.pos_log_path
-    args.scheme = args.scheme or args.pos_scheme
-    if args.log_path is None or args.scheme is None:
-        parser.error("provide a log path and scheme, either positionally or with --log_path/--scheme")
-    return args
+# Reconstruction loss on secondary y-axis (much smaller)
+ax1b = ax1.twinx()
+ax1b.plot(x, df['avg_reconstruction_loss'], label='Reconstruction Loss', color='red', linewidth=2)
+ax1b.set_ylabel('Reconstruction Loss', color='red')
+ax1b.tick_params(axis='y', labelcolor='red')
 
+# Add legend (combine both axes)
+lines1, labels1 = ax1.get_legend_handles_labels()
+lines2, labels2 = ax1b.get_legend_handles_labels()
+ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
+ax1.set_title('Loss Evolution')
 
-def pretty_name(name):
-    replacements = {
-        "avg": "Average",
-        "ce": "CE",
-        "kd": "KD",
-        "kl": "KL",
-        "mse": "MSE",
-        "lr": "LR",
-    }
-    words = str(name).replace("-", "_").split("_")
-    return " ".join(replacements.get(word.lower(), word.capitalize()) for word in words)
+# ------------------------------------------------------------
+# Subplot 2: Sparsity Loss (log scale)
+# ------------------------------------------------------------
+ax2.plot(x, df['avg_sparsity_loss'], label='Sparsity Loss', color='green', linewidth=2)
+ax2.set_xlabel('Tokens seen (millions)')
+ax2.set_ylabel('Sparsity Loss')
+ax2.set_yscale('log')
+ax2.grid(True, linestyle='--', alpha=0.6)
+ax2.set_title('Sparsity Loss (log scale)')
 
+# Highlight where sparsity loss drops below 0.01 (roughly)
+threshold = 0.01
+idx = np.where(df['avg_sparsity_loss'] < threshold)[0]
+if len(idx) > 0:
+    first_idx = idx[0]
+    x_ann = x.iloc[first_idx]
+    y_ann = df['avg_sparsity_loss'].iloc[first_idx]
+    ax2.axvline(x_ann, color='gray', linestyle=':', linewidth=1.5, alpha=0.7)
+    ax2.annotate(f'Sparsity loss < {threshold}',
+                 xy=(x_ann, y_ann),
+                 xytext=(x_ann + 5, y_ann * 10),
+                 arrowprops=dict(arrowstyle='->', color='gray'),
+                 fontsize=11, color='darkgreen')
 
-def configure_plot_style():
-    try:
-        import matplotlib.pyplot as plt
-    except ImportError as exc:
-        raise SystemExit(
-            "matplotlib is required for plotting. Install it with `pip install matplotlib`."
-        ) from exc
+# ------------------------------------------------------------
+# Subplot 3: Sparsity Metrics – L0 and L1 norms
+# ------------------------------------------------------------
+ax3.plot(x, df['avg_l0_norm'], label='L0 Norm (active features)', color='purple', linewidth=2)
+ax3.set_xlabel('Tokens seen (millions)')
+ax3.set_ylabel('L0 Norm', color='purple')
+ax3.tick_params(axis='y', labelcolor='purple')
+ax3.grid(True, linestyle='--', alpha=0.6)
 
-    plt.rcParams.update({
-        "figure.facecolor": "white",
-        "axes.facecolor": "white",
-        "axes.edgecolor": PAPER_COLORS["spine"],
-        "axes.labelcolor": PAPER_COLORS["text"],
-        "axes.labelsize": 10,
-        "axes.labelweight": "bold",
-        "axes.titlesize": 11,
-        "axes.titleweight": "bold",
-        "font.family": "DejaVu Sans",
-        "font.size": 10,
-        "legend.frameon": False,
-        "legend.fontsize": 9,
-        "savefig.facecolor": "white",
-        "xtick.color": PAPER_COLORS["text"],
-        "xtick.labelsize": 9,
-        "ytick.color": PAPER_COLORS["text"],
-        "ytick.labelsize": 9,
-    })
-    return plt
+ax3b = ax3.twinx()
+ax3b.plot(x, df['avg_l1_norm'], label='L1 Norm', color='orange', linewidth=2)
+ax3b.set_ylabel('L1 Norm', color='orange')
+ax3b.tick_params(axis='y', labelcolor='orange')
 
+lines3, labels3 = ax3.get_legend_handles_labels()
+lines4, labels4 = ax3b.get_legend_handles_labels()
+ax3.legend(lines3 + lines4, labels3 + labels4, loc='upper right')
+ax3.set_title('Sparsity Norms')
 
-def read_rows(log_path):
-    suffix = log_path.suffix.lower()
-    if suffix == ".jsonl":
-        with log_path.open() as f:
-            return [json.loads(line) for line in f if line.strip()]
+# Annotate stabilization of L0 norm
+stable_l0 = df['avg_l0_norm'].iloc[-1] * 1.05  # near final value
+idx_stable = np.where(df['avg_l0_norm'] < stable_l0)[0]
+if len(idx_stable) > 0:
+    start_stable = idx_stable[0]
+    x_stable = x.iloc[start_stable]
+    ax3.axvline(x_stable, color='gray', linestyle=':', linewidth=1.5, alpha=0.7)
+    ax3.annotate('L0 stabilizes',
+                 xy=(x_stable, df['avg_l0_norm'].iloc[start_stable]),
+                 xytext=(x_stable + 2, df['avg_l0_norm'].iloc[start_stable] * 1.5),
+                 arrowprops=dict(arrowstyle='->', color='gray'),
+                 fontsize=11, color='darkmagenta')
 
-    with log_path.open(newline="") as f:
-        return list(csv.DictReader(f))
+# ------------------------------------------------------------
+# Subplot 4: Learning Rate Schedule
+# ------------------------------------------------------------
+ax4.plot(x, df['lr'], label='Learning Rate', color='black', linewidth=2)
+ax4.set_xlabel('Tokens seen (millions)')
+ax4.set_ylabel('Learning Rate')
+ax4.set_yscale('log')
+ax4.grid(True, linestyle='--', alpha=0.6)
+ax4.set_title('Learning Rate Decay')
 
+# Highlight the start of decay (first drop from 2e-5)
+initial_lr = df['lr'].iloc[0]
+decay_start = np.where(df['lr'] < initial_lr)[0]
+if len(decay_start) > 0:
+    start_idx = decay_start[0]
+    x_decay = x.iloc[start_idx]
+    ax4.axvline(x_decay, color='gray', linestyle=':', linewidth=1.5, alpha=0.7)
+    ax4.annotate('LR begins to decay',
+                 xy=(x_decay, df['lr'].iloc[start_idx]),
+                 xytext=(x_decay + 2, df['lr'].iloc[start_idx] * 2),
+                 arrowprops=dict(arrowstyle='->', color='gray'),
+                 fontsize=11)
 
-def as_float(value):
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
-        return None
-    return parsed if math.isfinite(parsed) else None
+# ------------------------------------------------------------
+# Final touches
+# ------------------------------------------------------------
+plt.tight_layout()
+plt.savefig('sae_training_curves.pdf', dpi=300, bbox_inches='tight')
+plt.savefig('sae_training_curves.png', dpi=300, bbox_inches='tight')
+plt.show()
 
-
-def choose_x_column(rows):
-    for name in ("global_step", "step_end", "step", "epoch"):
-        if name in rows[0]:
-            return name
-    return None
-
-
-def choose_loss_columns(rows):
-    numeric_columns = []
-    for name in rows[0]:
-        values = [as_float(row.get(name)) for row in rows]
-        if any(value is not None for value in values):
-            numeric_columns.append(name)
-
-    loss_columns = [
-        name
-        for name in numeric_columns
-        if "loss" in name.lower() and name.lower() not in BOOKKEEPING_COLUMNS
-    ]
-    if loss_columns:
-        return loss_columns
-
-    return [
-        name
-        for name in numeric_columns
-        if name.lower() not in BOOKKEEPING_COLUMNS and "step" not in name.lower()
-    ]
-
-
-def ema(values, smooth):
-    if not 0 <= smooth < 1:
-        raise ValueError("--smooth must be in [0, 1).")
-
-    smoothed = []
-    last = None
-    for value in values:
-        if value is None:
-            smoothed.append(None)
-            continue
-        last = value if last is None else smooth * last + (1 - smooth) * value
-        smoothed.append(last)
-    return smoothed
-
-
-def plot_losses(log_path, scheme, output_path=None, smooth=0.9, show=False):
-    plt = configure_plot_style()
-
-    rows = read_rows(log_path)
-    if not rows:
-        raise SystemExit(f"No rows found in {log_path}.")
-
-    x_column = choose_x_column(rows)
-    x_values = (
-        [as_float(row.get(x_column)) for row in rows]
-        if x_column is not None
-        else list(range(1, len(rows) + 1))
-    )
-    if any(value is None for value in x_values):
-        x_values = list(range(1, len(rows) + 1))
-        x_label = "log row"
-    else:
-        x_label = x_column or "log row"
-
-    loss_columns = choose_loss_columns(rows)
-    if not loss_columns:
-        raise SystemExit(f"No numeric loss columns found in {log_path}.")
-
-    ncols = 1 if len(loss_columns) <= 2 else 2
-    nrows = math.ceil(len(loss_columns) / ncols)
-    fig, axes = plt.subplots(
-        nrows,
-        ncols,
-        figsize=(7.2 * ncols, 2.65 * nrows + 0.45),
-        sharex=True,
-        constrained_layout=True,
-        squeeze=False,
-    )
-
-    for idx, (axis, column) in enumerate(zip(axes.ravel(), loss_columns)):
-        values = [as_float(row.get(column)) for row in rows]
-        smooth_values = ema(values, smooth)
-        clean_points = [
-            (x, raw, smooth_y)
-            for x, raw, smooth_y in zip(x_values, values, smooth_values)
-            if raw is not None and smooth_y is not None
-        ]
-        clean_x = [point[0] for point in clean_points]
-        clean_y = [point[1] for point in clean_points]
-        clean_smooth_y = [point[2] for point in clean_points]
-
-        axis.plot(clean_x, clean_y, color=PAPER_COLORS["raw"], alpha=0.28, linewidth=0.8)
-        axis.plot(clean_x, clean_smooth_y, color=PAPER_COLORS["smoothed"], linewidth=2.25)
-        axis.set_title(pretty_name(column), loc="left", pad=8)
-        axis.set_ylabel("Loss")
-        axis.grid(True, axis="y", color=PAPER_COLORS["grid"], alpha=0.75, linewidth=0.8)
-        axis.grid(False, axis="x")
-        axis.spines["top"].set_visible(False)
-        axis.spines["right"].set_visible(False)
-        axis.spines["left"].set_linewidth(0.8)
-        axis.spines["bottom"].set_linewidth(0.8)
-        axis.tick_params(axis="both", length=3, width=0.8)
-
-        final_value = clean_smooth_y[-1] if clean_smooth_y else None
-        if final_value is not None:
-            axis.annotate(
-                f"{final_value:.3g}",
-                xy=(clean_x[-1], final_value),
-                xytext=(6, 0),
-                textcoords="offset points",
-                color=PAPER_COLORS["smoothed"],
-                fontsize=9,
-                fontweight="bold",
-                va="center",
-            )
-
-        if idx == 0:
-            axis.text(
-                0.995,
-                0.97,
-                f"EMA {smooth:g}",
-                transform=axis.transAxes,
-                ha="right",
-                va="top",
-                color="#52606d",
-                fontsize=8.5,
-            )
-
-    for axis in axes.ravel()[len(loss_columns):]:
-        axis.set_visible(False)
-
-    for row_idx in range(nrows):
-        for col_idx in range(ncols):
-            axis = axes[row_idx, col_idx]
-            if not axis.get_visible():
-                continue
-            visible_below = any(
-                axes[other_row, col_idx].get_visible()
-                for other_row in range(row_idx + 1, nrows)
-            )
-            if not visible_below:
-                axis.set_xlabel(pretty_name(x_label))
-                axis.tick_params(axis="x", labelbottom=True)
-
-    fig.suptitle(
-        f"{pretty_name(scheme)} Losses",
-        x=0.01,
-        ha="left",
-        fontsize=15,
-        fontweight="bold",
-        color=PAPER_COLORS["text"],
-    )
-
-    output_path = output_path or log_path.with_name(f"{scheme}_losses.png")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=180, bbox_inches="tight")
-
-    if show:
-        plt.show()
-    else:
-        plt.close(fig)
-
-    return output_path
-
-
-def main():
-    args = parse_args()
-    output_path = plot_losses(
-        args.log_path,
-        args.scheme,
-        output_path=args.output,
-        smooth=args.smooth,
-        show=args.show,
-    )
-    print(output_path)
-
-
-if __name__ == "__main__":
-    main()
+print("Plots saved as 'sae_training_curves.pdf' and 'sae_training_curves.png'")
