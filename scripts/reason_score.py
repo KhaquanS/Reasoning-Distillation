@@ -287,10 +287,17 @@ def compute_reason_score(
     mu_pos = sum_pos / max(1, count_pos) if count_pos > 0 else torch.zeros(sae.latent_dim, device=device)
     mu_neg = sum_neg / max(1, count_neg) if count_neg > 0 else torch.zeros(sae.latent_dim, device=device)
 
-    # Per-word means
+    # Per-word means. Iterate over the full range of pattern indices, not
+    # just `for idx in per_word_sums` -- per_word_sums/per_word_counts are
+    # defaultdicts that only gain an entry for a pattern once it's actually
+    # matched at least once. A pattern that never occurs anywhere in the
+    # dataset (entirely plausible over only 10k samples for something like
+    # a rare capitalization/spacing variant) would otherwise be silently
+    # missing from mu_per_word and crash the word_means stack below with a
+    # KeyError. Zero occurrences correctly means a zero mean vector here.
     mu_per_word = {}
-    for idx in per_word_sums:
-        if per_word_counts[idx] > 0:
+    for idx in range(len(reasoning_token_ids)):
+        if per_word_counts.get(idx, 0) > 0:
             mu_per_word[idx] = per_word_sums[idx] / per_word_counts[idx]
         else:
             mu_per_word[idx] = torch.zeros(sae.latent_dim, device=device)
