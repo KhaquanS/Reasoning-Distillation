@@ -21,7 +21,7 @@ method:
 
 model:
   teacher: Qwen/Qwen3.5-4B
-  student: Qwen/Qwen2.5-Math-1.5B
+  student: Qwen/Qwen3.5-2B
   teacher_quantize_8bit: true
   student_checkpoint: null
 
