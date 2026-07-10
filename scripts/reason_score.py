@@ -175,15 +175,15 @@ def compute_reason_score(
             activations = hidden_states[layer + 1]  # (B, T, D)
 
             # Flatten to (B*T, D) and encode with SAE
-            # Keep activations in their original dtype (should match SAE dtype)
+            # Convert to bf16 if on CUDA, else fp32
             flat_acts = activations.reshape(-1, activations.shape[-1])
+            target_dtype = sae.encoder.weight.dtype
+            flat_acts = flat_acts.to(target_dtype)
+
             # Normalize to target norm (as done in training)
             target_norm = 64.0
             flat_norm = flat_acts.norm(dim=-1, keepdim=True).clamp(min=1e-8)
             flat_acts_normed = flat_acts * (target_norm / flat_norm)
-
-            # Ensure dtype matches SAE exactly
-            flat_acts_normed = flat_acts_normed.to(sae.encoder.weight.dtype)
 
             # Encode with SAE
             latent = sae.encode(flat_acts_normed)  # (B*T, latent_dim)
@@ -321,7 +321,10 @@ def main():
     # Load SAE
     print(f"Loading SAE from {args.sae_checkpoint}...")
     sae = load_sae(args.sae_checkpoint, device, dtype)
-    sae = sae.to(dtype)  # Ensure all params are in target dtype
+    
+    # Force SAE to target dtype
+    sae = sae.to(dtype=dtype)
+    print(f"SAE dtype: {sae.encoder.weight.dtype}")
 
     # Load teacher
     print(f"Loading teacher {args.teacher}...")
@@ -335,6 +338,7 @@ def main():
     # If not quantized, ensure teacher is in the same dtype
     if not args.teacher_quantize_8bit:
         teacher = teacher.to(dtype)
+    print(f"Teacher dtype: {next(teacher.parameters()).dtype}")
 
     # Compute ReasonScore
     print("Computing ReasonScore...")
