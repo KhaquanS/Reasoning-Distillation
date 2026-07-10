@@ -175,13 +175,14 @@ def compute_reason_score(
             activations = hidden_states[layer + 1]  # (B, T, D)
 
             # Flatten to (B*T, D) and encode with SAE
-            flat_acts = activations.reshape(-1, activations.shape[-1]).float()
+            # Keep activations in their original dtype (should match SAE dtype)
+            flat_acts = activations.reshape(-1, activations.shape[-1])
             # Normalize to target norm (as done in training)
-            target_norm = 64.0  # From config
+            target_norm = 64.0
             flat_norm = flat_acts.norm(dim=-1, keepdim=True).clamp(min=1e-8)
             flat_acts_normed = flat_acts * (target_norm / flat_norm)
 
-            # Cast to SAE's dtype to avoid dtype mismatch
+            # Ensure dtype matches SAE exactly
             flat_acts_normed = flat_acts_normed.to(sae.encoder.weight.dtype)
 
             # Encode with SAE
@@ -295,10 +296,8 @@ def main():
                         help="Random seed")
     parser.add_argument("--alpha", type=float, default=1.0,
                         help="Entropy penalty exponent (default: 1.0)")
-    parser.add_argument("--teacher_quantize_8bit", action="store_true", default=True,
-                        help="Load teacher in 8-bit quantization")
-    parser.add_argument("--no_teacher_quantize", action="store_false", dest="teacher_quantize_8bit",
-                        help="Disable 8-bit quantization for teacher")
+    parser.add_argument("--teacher_quantize_8bit", action="store_true", default=False,
+                        help="Load teacher in 8-bit quantization (default: False)")
     args = parser.parse_args()
 
     set_seed(args.seed)
@@ -322,6 +321,7 @@ def main():
     # Load SAE
     print(f"Loading SAE from {args.sae_checkpoint}...")
     sae = load_sae(args.sae_checkpoint, device, dtype)
+    sae = sae.to(dtype)  # Ensure all params are in target dtype
 
     # Load teacher
     print(f"Loading teacher {args.teacher}...")
@@ -332,6 +332,9 @@ def main():
         quantize_8bit=args.teacher_quantize_8bit,
         cache_dir=args.cache_dir,
     )
+    # If not quantized, ensure teacher is in the same dtype
+    if not args.teacher_quantize_8bit:
+        teacher = teacher.to(dtype)
 
     # Compute ReasonScore
     print("Computing ReasonScore...")
