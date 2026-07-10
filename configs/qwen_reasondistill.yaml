@@ -35,8 +35,8 @@ alignment:
 
 training:
   max_length: 2048
-  batch_size: 4
-  accum_steps: 32
+  batch_size: 2
+  accum_steps: 64
   epochs: 1
 
   lr: 2.0e-5
