@@ -16,7 +16,7 @@ data:
 method:
   name: reasondistill
   sae_checkpoint: ./checkpoints/qwen_sae_layer16_16x/step_8000/sae.pt
-  reason_score_path: ./checkpoints/qwen_sae_layer16_16x/reasonscores.pt # replace after scoring SAE features
+  reason_score_path: ./checkpoints/qwen_sae_layer16_16x/reasonscore.pt # replace after scoring SAE features
   reasoning_neuron_count: 196
 
 model:
