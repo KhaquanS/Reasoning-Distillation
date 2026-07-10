@@ -94,6 +94,12 @@ class SparseAutoencoder(nn.Module):
             Tensor: Sparse latent codes f(x) of shape (batch_size, seq_len, latent_dim)
                    or (batch_size, latent_dim)
         """
+        # Defensive cast: upstream activations (e.g. from a quantized or
+        # hybrid-attention teacher) can silently come back in fp32 even when
+        # the SAE itself is bf16. Cast here so callers never have to worry
+        # about matching dtypes exactly before calling encode().
+        if x.dtype != self.encoder.weight.dtype:
+            x = x.to(self.encoder.weight.dtype)
         return F.relu(self.encoder(x))
 
     def decode(self, latent):
@@ -110,6 +116,8 @@ class SparseAutoencoder(nn.Module):
             Tensor: Reconstructed activations x̂ of shape (batch_size, seq_len, activation_dim)
                    or (batch_size, activation_dim)
         """
+        if latent.dtype != self.decoder.weight.dtype:
+            latent = latent.to(self.decoder.weight.dtype)
         return self.decoder(latent)
 
     def forward(self, x):

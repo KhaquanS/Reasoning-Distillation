@@ -1,6 +1,8 @@
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
-def load_teacher(model_id, device, dtype, quantize_8bit=True, cache_dir=None):
+def load_teacher(model_id, device, dtype, quantize_8bit=False, cache_dir=None):
+    # Default now matches scripts/reason_score.py's --teacher_quantize_8bit
+    # default (False) so the two can't silently drift apart again.
     if quantize_8bit:
         bnb_config = BitsAndBytesConfig(load_in_8bit=True, llm_int8_threshold=6.0)
         model = AutoModelForCausalLM.from_pretrained(
@@ -11,9 +13,16 @@ def load_teacher(model_id, device, dtype, quantize_8bit=True, cache_dir=None):
             cache_dir=cache_dir
         )
     else:
+        # quantization_config=None explicitly overrides any
+        # quantization_config baked into the checkpoint's config.json (some
+        # hub repos, especially large MoE models, ship with weights
+        # pre-quantized). Without this, from_pretrained can silently load
+        # bitsandbytes layers even though you never asked for 8-bit here --
+        # which also means downstream activations may not stay bf16.
         model = AutoModelForCausalLM.from_pretrained(
             model_id,
             torch_dtype=dtype,
+            quantization_config=None,
             device_map={"": 0},
             cache_dir=cache_dir
         )

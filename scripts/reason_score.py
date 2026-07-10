@@ -153,6 +153,11 @@ def compute_reason_score(
     total_samples = 0
     pbar = tqdm(loader, desc="Computing ReasonScore")
 
+    # Fixed once up front rather than re-read every batch. sae.encoder.weight
+    # never changes dtype mid-run, and pinning it here makes it obvious what
+    # dtype every downstream tensor in this loop is supposed to be.
+    target_dtype = sae.encoder.weight.dtype
+
     with torch.no_grad():
         for batch in pbar:
             if max_samples and total_samples >= max_samples:
@@ -172,20 +177,37 @@ def compute_reason_score(
             hidden_states = outputs.hidden_states
             # hidden_states[0] = embeddings, hidden_states[1] = layer 0, etc.
             # So layer L corresponds to hidden_states[L + 1]
-            activations = hidden_states[layer + 1]  # (B, T, D)
+            #
+            # NOTE: with hybrid/linear-attention teachers (e.g. Qwen3.5's
+            # Gated DeltaNet layers) and/or a checkpoint that carries a
+            # baked-in quantization_config, `transformers` frequently
+            # upcasts intermediate hidden states to fp32 internally for
+            # numerical stability (this is especially likely when the fast
+            # fla/causal-conv1d kernels aren't installed and it falls back
+            # to the pure-torch path, as seen in this run's log). So we
+            # cannot assume hidden_states already matches the model's
+            # nominal dtype -- cast explicitly right here.
+            activations = hidden_states[layer + 1].to(target_dtype)  # (B, T, D)
 
-            # Flatten to (B*T, D) and encode with SAE
-            # Convert to bf16 if on CUDA, else fp32
+            # Flatten to (B*T, D)
             flat_acts = activations.reshape(-1, activations.shape[-1])
-            target_dtype = sae.encoder.weight.dtype
-            flat_acts = flat_acts.to(target_dtype)
 
-            # Normalize to target norm (as done in training)
+            # Normalize to target norm (as done in training). Do the divide
+            # in fp32 for numerical stability (bf16 has ~3 decimal digits of
+            # precision, so norms and their reciprocals can be noisy), then
+            # cast the *result* back to target_dtype explicitly -- don't
+            # rely on Python-float/tensor type promotion to keep this bf16.
             target_norm = 64.0
-            flat_norm = flat_acts.norm(dim=-1, keepdim=True).clamp(min=1e-8)
-            flat_acts_normed = flat_acts * (target_norm / flat_norm)
+            flat_norm = flat_acts.float().norm(dim=-1, keepdim=True).clamp(min=1e-8)
+            scale = (target_norm / flat_norm).to(target_dtype)
+            flat_acts_normed = flat_acts * scale
 
-            # Encode with SAE
+            # Encode with SAE (sae.encode() also defensively casts, but we
+            # keep this explicit so dtype bugs show up here, not three
+            # frames deep inside sae.py)
+            assert flat_acts_normed.dtype == target_dtype, (
+                f"expected {target_dtype}, got {flat_acts_normed.dtype}"
+            )
             latent = sae.encode(flat_acts_normed)  # (B*T, latent_dim)
 
             # Reshape back to (B, T, latent_dim)
