@@ -1,3 +1,5 @@
+"""GPQA benchmark."""
+
 import random
 
 from custom_eval.benchmarks.base import Benchmark, EvalExample
@@ -9,13 +11,16 @@ LABELS = ["A", "B", "C", "D"]
 
 
 def load(cache_dir=None, split="train", max_samples=None, seed=42, subset="gpqa_diamond", **_):
+    """Load GPQA dataset."""
     ds, source = try_load_dataset(
         [{"path": "Idavidrein/gpqa", "name": subset, "splits": [split, "train"]}],
         cache_dir=cache_dir,
         split=split,
     )
+    
     rng = random.Random(seed)
     examples = []
+    
     if ds is not None:
         for i, row in enumerate(ds):
             correct = row.get("Correct Answer") or row.get("correct_answer")
@@ -29,8 +34,16 @@ def load(cache_dir=None, split="train", max_samples=None, seed=42, subset="gpqa_
             answer = LABELS[choices.index(correct)]
             choice_text = "\n".join(f"{label}. {choice}" for label, choice in zip(LABELS, choices))
             question = row.get("Question") or row.get("question")
-            examples.append(EvalExample(str(i), f"{question}\n\nChoices:\n{choice_text}", answer, {"source": source}))
+            examples.append(
+                EvalExample(
+                    str(i),
+                    f"{question}\n\nChoices:\n{choice_text}",
+                    answer,
+                    {"source": source},
+                )
+            )
     else:
+        # Fallback example
         examples = [
             EvalExample(
                 "gpqa_fallback_0",
@@ -39,5 +52,5 @@ def load(cache_dir=None, split="train", max_samples=None, seed=42, subset="gpqa_
                 {"source": "embedded_fallback", "load_errors": source.get("errors", [])},
             )
         ]
+    
     return Benchmark("gpqa", limit_examples(examples, max_samples), choice_match)
-
