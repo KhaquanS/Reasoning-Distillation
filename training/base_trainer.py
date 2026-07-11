@@ -132,6 +132,9 @@ class BaseTrainer:
         )
         steps_per_epoch = len(loader)
         total_opt_steps = (steps_per_epoch * self.config.epochs) // self.config.accum_steps
+        # If there's a remainder from integer division, we need an extra step
+        if (steps_per_epoch * self.config.epochs) % self.config.accum_steps != 0:
+            total_opt_steps += 1
 
         self.scheduler = torch.optim.lr_scheduler.OneCycleLR(
             self.optimizer,
@@ -191,9 +194,13 @@ class BaseTrainer:
                     params += list(self.aligner.parameters())
                 torch.nn.utils.clip_grad_norm_(params, self.config.max_grad_norm)
                 self.optimizer.step()
-                self.scheduler.step()
-                self.optimizer.zero_grad()
                 self.global_step += 1
+
+                # Only step scheduler if we haven't exceeded total steps
+                if self.global_step < self.scheduler.total_steps:
+                    self.scheduler.step()
+
+                self.optimizer.zero_grad()
 
                 save_every_n_steps = getattr(self.config, "save_every_n_steps", None)
                 if save_every_n_steps and self.global_step % save_every_n_steps == 0:
@@ -201,7 +208,7 @@ class BaseTrainer:
 
             epoch_loss += raw_loss
             num_batches += 1
-            lr = self.scheduler.get_last_lr()[0]
+            lr = self.scheduler.get_last_lr()[0] if self.scheduler else self.config.lr
             self.loss_logger.add(
                 epoch=epoch,
                 step=step,
