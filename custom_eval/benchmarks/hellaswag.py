@@ -1,57 +1,126 @@
-"""HellaSwag benchmark."""
+"""
+Model loading utilities with support for HF models and local checkpoints.
+"""
 
-from custom_eval.benchmarks.base import Benchmark, EvalExample
-from custom_eval.benchmarks.loaders import limit_examples, try_load_dataset
-from custom_eval.scoring import choice_match
+from pathlib import Path
+from typing import Optional, Tuple, Union
+
+import torch
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    BitsAndBytesConfig,
+    PreTrainedModel,
+    PreTrainedTokenizer,
+)
+
+from custom_eval.config import ModelSpec
 
 
-LABELS = ["A", "B", "C", "D"]
-
-
-def load(cache_dir=None, split="validation", max_samples=None, **_):
-    """Load HellaSwag dataset."""
-    ds, source = try_load_dataset(
-        [{"path": "Rowan/hellaswag", "splits": [split, "validation", "train"]}],
-        cache_dir=cache_dir,
-        split=split,
-    )
+def resolve_dtype(dtype_name: str) -> Union[str, torch.dtype]:
+    """Convert dtype string to torch dtype."""
+    if dtype_name == "auto":
+        return "auto"
     
-    examples = []
-    if ds is not None:
-        for i, row in enumerate(ds):
-            # Skip rows with missing or empty label
-            label = row.get("label")
-            if label is None or label == "":
-                continue
-            try:
-                label_idx = int(label)
-            except (ValueError, TypeError):
-                continue
-            if label_idx < 0 or label_idx >= len(LABELS):
-                continue
-            
-            endings = row["endings"]
-            choices = "\n".join(f"{label}. {ending}" for label, ending in zip(LABELS, endings))
-            context = f"{row.get('ctx_a', '')} {row.get('ctx_b', '')}".strip() or row.get("ctx", "")
-            question = f"Choose the most plausible ending.\n\nContext: {context}\n\nChoices:\n{choices}"
-            answer = LABELS[label_idx]
-            examples.append(
-                EvalExample(
-                    str(row.get("ind", i)),
-                    question,
-                    answer,
-                    {"source": source},
-                )
-            )
+    mapping = {
+        "float16": torch.float16,
+        "fp16": torch.float16,
+        "bfloat16": torch.bfloat16,
+        "bf16": torch.bfloat16,
+        "float32": torch.float32,
+        "fp32": torch.float32,
+        "float64": torch.float64,
+        "fp64": torch.float64,
+    }
+    
+    if dtype_name not in mapping:
+        raise ValueError(f"Unsupported dtype '{dtype_name}'. Supported: {list(mapping.keys())}")
+    
+    return mapping[dtype_name]
+
+
+def is_local_path(path: str) -> bool:
+    """Check if the path is a local directory containing model files."""
+    p = Path(path).expanduser()
+    return p.exists() and p.is_dir() and (p / "config.json").exists()
+
+
+def load_model_and_tokenizer(
+    spec: ModelSpec,
+    cache_dir: Optional[str] = None,
+) -> Tuple[PreTrainedModel, PreTrainedTokenizer]:
+    """
+    Load a model and tokenizer from Hugging Face or local path.
+    Handles local checkpoints robustly.
+    """
+    checkpoint_path = Path(spec.checkpoint).expanduser()
+    if checkpoint_path.exists() and (checkpoint_path / "config.json").exists():
+        model_ref = str(checkpoint_path)
+        is_local = True
     else:
-        # Fallback example
-        examples = [
-            EvalExample(
-                "hellaswag_fallback_0",
-                "Choose the most plausible ending.\n\nContext: A person opens an umbrella because\n\nChoices:\nA. it is raining outside.\nB. the sun turned into music.\nC. they are reading a book.\nD. the floor is asleep.",
-                "A",
-                {"source": "embedded_fallback", "load_errors": source.get("errors", [])},
-            )
-        ]
-    
-    return Benchmark("hellaswag", limit_examples(examples, max_samples), choice_match)
+        model_ref = spec.checkpoint
+        is_local = False
+
+    tokenizer_ref = spec.tokenizer or model_ref
+
+    # Determine if tokenizer path is local
+    tokenizer_is_local = is_local or is_local_path(tokenizer_ref)
+
+    # Build tokenizer kwargs
+    tokenizer_kwargs = {
+        "cache_dir": cache_dir,
+        "trust_remote_code": spec.trust_remote_code,
+        "padding_side": "left",          # required for batched generation
+    }
+    if tokenizer_is_local:
+        tokenizer_kwargs["local_files_only"] = True
+
+    # Load tokenizer with retry fallback
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_ref, **tokenizer_kwargs)
+    except Exception as e:
+        if tokenizer_is_local:
+            # If local loading fails, try without local_files_only (might be a repo)
+            tokenizer_kwargs.pop("local_files_only", None)
+            tokenizer = AutoTokenizer.from_pretrained(tokenizer_ref, **tokenizer_kwargs)
+        else:
+            raise e
+
+    # Set padding token if missing
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    # Build model loading kwargs
+    model_kwargs = {
+        "cache_dir": cache_dir,
+        "trust_remote_code": spec.trust_remote_code,
+        "torch_dtype": resolve_dtype(spec.dtype),
+        "device_map": spec.device_map,
+    }
+
+    # Quantization
+    if spec.load_in_8bit and spec.load_in_4bit:
+        raise ValueError("Cannot use both load_in_8bit and load_in_4bit")
+
+    if spec.load_in_8bit:
+        model_kwargs["quantization_config"] = BitsAndBytesConfig(
+            load_in_8bit=True,
+            bnb_8bit_compute_dtype=resolve_dtype(spec.dtype),
+        )
+    elif spec.load_in_4bit:
+        model_kwargs["quantization_config"] = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_compute_dtype=resolve_dtype(spec.dtype),
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_quant_type="nf4",
+        )
+
+    # Flash Attention
+    if spec.use_flash_attention_2:
+        model_kwargs["attn_implementation"] = "flash_attention_2"
+
+    # Load model
+    model = AutoModelForCausalLM.from_pretrained(model_ref, **model_kwargs)
+    model.eval()
+
+    return model, tokenizer
