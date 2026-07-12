@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List
 
+import torch
 from tqdm import tqdm
 
 from custom_eval.benchmarks import load_benchmark
@@ -24,8 +25,12 @@ def run_evaluation(config: EvalConfig) -> List[Dict[str, Any]]:
     """
     Run the full evaluation with batched example processing.
     """
-    print(f"Model is on: {model.device}")
-    print(f"Memory footprint: {model.get_memory_footprint() / 1e9:.2f} GB")
+    # Show CUDA status at start
+    print(f"CUDA available: {torch.cuda.is_available()}")
+    if torch.cuda.is_available():
+        print(f"CUDA device: {torch.cuda.get_device_name(0)}")
+        print(f"CUDA memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+    print()
 
     output_dir = Path(config.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -40,7 +45,16 @@ def run_evaluation(config: EvalConfig) -> List[Dict[str, Any]]:
         print(f"Pass@k: {config.pass_at_k}")
         print(f"{'='*60}")
 
+        # Load the model (this happens inside the loop)
         model, tokenizer = load_model_and_tokenizer(model_spec, config.cache_dir)
+
+        # Now print device info (after loading)
+        print(f"Model device: {model.device}")
+        if hasattr(model, "hf_device_map"):
+            print(f"Device map: {model.hf_device_map}")
+        print(f"Model memory footprint: {model.get_memory_footprint() / 1e9:.2f} GB")
+        print()
+
         model_results = []
 
         for benchmark_name in config.benchmarks:
