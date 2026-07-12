@@ -5,7 +5,7 @@ Main evaluation runner with batched inference and pass@k support.
 import json
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import torch
 from tqdm import tqdm
@@ -19,6 +19,18 @@ from custom_eval.modeling import load_model_and_tokenizer
 def _slug(text: str) -> str:
     """Create a safe filename from text."""
     return "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in text)[:120]
+
+
+def _get_benchmark_param(
+    config: EvalConfig,
+    benchmark_name: str,
+    param_name: str,
+    default: Any,
+) -> Any:
+    """
+    Get a parameter from benchmark_options if present, else use global config.
+    """
+    return config.benchmark_options.get(benchmark_name, {}).get(param_name, default)
 
 
 def run_evaluation(config: EvalConfig) -> List[Dict[str, Any]]:
@@ -45,10 +57,9 @@ def run_evaluation(config: EvalConfig) -> List[Dict[str, Any]]:
         print(f"Pass@k: {config.pass_at_k}")
         print(f"{'='*60}")
 
-        # Load the model (this happens inside the loop)
+        # Load the model
         model, tokenizer = load_model_and_tokenizer(model_spec, config.cache_dir)
 
-        # Now print device info (after loading)
         print(f"Model device: {model.device}")
         if hasattr(model, "hf_device_map"):
             print(f"Device map: {model.hf_device_map}")
@@ -60,6 +71,26 @@ def run_evaluation(config: EvalConfig) -> List[Dict[str, Any]]:
         for benchmark_name in config.benchmarks:
             print(f"\n--- Running {benchmark_name} ---")
 
+            # Get effective parameters for this benchmark
+            effective_max_tokens = _get_benchmark_param(
+                config, benchmark_name, "max_new_tokens", config.max_new_tokens
+            )
+            effective_temp = _get_benchmark_param(
+                config, benchmark_name, "temperature", config.temperature
+            )
+            effective_top_p = _get_benchmark_param(
+                config, benchmark_name, "top_p", config.top_p
+            )
+            effective_top_k = _get_benchmark_param(
+                config, benchmark_name, "top_k", config.top_k
+            )
+            effective_repetition_penalty = _get_benchmark_param(
+                config, benchmark_name, "repetition_penalty", config.repetition_penalty
+            )
+
+            print(f"Effective max_new_tokens: {effective_max_tokens}")
+
+            # Load benchmark data
             benchmark = load_benchmark(
                 benchmark_name,
                 cache_dir=config.cache_dir,
@@ -82,21 +113,21 @@ def run_evaluation(config: EvalConfig) -> List[Dict[str, Any]]:
                 batch_examples = examples[i:i+batch_size]
                 questions = [ex.question for ex in batch_examples]
 
-                # Generate candidates for the whole batch
+                # Generate candidates for the whole batch using effective parameters
                 candidates_per_question = generate_candidates_batch(
                     model=model,
                     tokenizer=tokenizer,
                     questions=questions,
                     benchmark_name=benchmark_name,
                     enable_thinking=model_spec.enable_thinking,
-                    max_new_tokens=config.max_new_tokens,
-                    temperature=config.temperature,
-                    top_p=config.top_p,
-                    top_k=config.top_k,
-                    repetition_penalty=config.repetition_penalty,
+                    max_new_tokens=effective_max_tokens,          # per-benchmark
+                    temperature=effective_temp,
+                    top_p=effective_top_p,
+                    top_k=effective_top_k,
+                    repetition_penalty=effective_repetition_penalty,
                     pass_at_k=config.pass_at_k,
                     system_prompt=None,
-                    max_input_length=4096,
+                    max_input_length=4096,   # could also be made per-benchmark if needed
                 )
 
                 # Process each example in the batch
@@ -134,11 +165,11 @@ def run_evaluation(config: EvalConfig) -> List[Dict[str, Any]]:
                 "correct": correct_count,
                 "pass_at_k": config.pass_at_k,
                 "enable_thinking": model_spec.enable_thinking,
-                "max_new_tokens": config.max_new_tokens,
-                "temperature": config.temperature,
-                "top_p": config.top_p,
-                "top_k": config.top_k,
-                "repetition_penalty": config.repetition_penalty,
+                "max_new_tokens": effective_max_tokens,         # log effective value
+                "temperature": effective_temp,
+                "top_p": effective_top_p,
+                "top_k": effective_top_k,
+                "repetition_penalty": effective_repetition_penalty,
                 "batch_size": config.batch_size,
                 "elapsed_seconds": round(elapsed, 3),
             }
