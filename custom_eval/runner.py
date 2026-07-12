@@ -127,7 +127,8 @@ def run_evaluation(config: EvalConfig) -> List[Dict[str, Any]]:
                     repetition_penalty=effective_repetition_penalty,
                     pass_at_k=config.pass_at_k,
                     system_prompt=None,
-                    max_input_length=4096,   # could also be made per-benchmark if needed
+                    max_input_length=4096, 
+                    show_progress=True,
                 )
 
                 # Process each example in the batch

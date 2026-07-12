@@ -7,10 +7,8 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 import torch
-from transformers import PreTrainedModel, PreTrainedTokenizer
-
-from custom_eval.prompts.qwen_formatter import QwenChatFormatter
-from custom_eval.prompts.templates import build_prompt
+from tqdm import tqdm
+from transformers import PreTrainedModel, PreTrainedTokenizer, StoppingCriteria, StoppingCriteriaList
 
 
 @dataclass
@@ -38,11 +36,9 @@ def extract_json_answer(text: str) -> Optional[str]:
     """Extract answer from JSON format like {"answer": "C"}."""
     import json
     try:
-        # Look for inline JSON with "answer" key
         match = re.search(r'\{[^}]*"answer"\s*:\s*"([^"]+)"[^}]*\}', text, re.IGNORECASE)
         if match:
             return match.group(1).strip()
-        # Try parsing the whole text as JSON
         data = json.loads(text)
         if "answer" in data:
             return str(data["answer"]).strip()
@@ -62,25 +58,21 @@ def extract_final_response(
     if not text:
         return ""
 
-    # Remove thinking content if present
     if enable_thinking:
         text = QwenChatFormatter.extract_response(text)
 
     text = text.strip()
 
-    # Math benchmarks: look for \boxed{...}
     if benchmark_name in {"math500", "aime25", "gsm8k"}:
         ans = extract_final_answer_from_boxed(text)
         if ans:
             return ans
 
-    # Multiple-choice benchmarks: look for JSON answer
     if benchmark_name in {"arc-c", "mmlu", "gpqa", "hellaswag"}:
         ans = extract_json_answer(text)
         if ans:
             return ans
 
-    # Generic fallback patterns
     patterns = [
         r"final\s+answer\s*:\s*(.+)",
         r"answer\s*:\s*(.+)",
@@ -88,7 +80,7 @@ def extract_final_response(
         r"therefore\s*,\s*(.+)$",
         r"so\s*,\s*(.+)$",
         r"the answer is\s*(.+)",
-        r"^([A-D])$",                     # single letter
+        r"^([A-D])$",
     ]
     for pat in patterns:
         match = re.search(pat, text, re.IGNORECASE | re.DOTALL)
@@ -97,9 +89,30 @@ def extract_final_response(
             if ans:
                 return ans
 
-    # Last resort: return the last non‑empty line
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     return lines[-1] if lines else text
+
+
+# ----------------------------------------------------------------------------
+# Token progress callback
+# ----------------------------------------------------------------------------
+
+class TokenProgressCallback(StoppingCriteria):
+    """A stopping criteria that updates a tqdm progress bar per generation step."""
+    def __init__(self, pbar: tqdm, total: int):
+        self.pbar = pbar
+        self.total = total
+        self.step = 0
+
+    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs) -> bool:
+        self.step += 1
+        # Update progress bar, but cap at total to avoid overshoot
+        if self.step <= self.total:
+            self.pbar.update(1)
+        return False  # never stop early (we rely on other criteria)
+
+    def close(self):
+        self.pbar.close()
 
 
 # ----------------------------------------------------------------------------
@@ -114,6 +127,9 @@ def _format_prompt(
     system_prompt: Optional[str] = None,
 ) -> str:
     """Build and apply the chat template to a single question."""
+    from custom_eval.prompts.templates import build_prompt
+    from custom_eval.prompts.qwen_formatter import QwenChatFormatter
+
     prompt = build_prompt(question, benchmark_name)
     messages = QwenChatFormatter.format_messages(
         prompt=prompt,
@@ -141,24 +157,24 @@ def generate_candidates_batch(
     pass_at_k: int = 1,
     system_prompt: Optional[str] = None,
     max_input_length: int = 4096,
+    show_progress: bool = False,
 ) -> List[List[GeneratedCandidate]]:
     """
     Generate candidates for a batch of questions, with support for pass@k.
 
-    Returns:
-        A list of lists: for each question, a list of GeneratedCandidate
-        of length `pass_at_k`.
+    If show_progress is True, a tqdm progress bar will be shown for token generation
+    within each batch.
     """
     if not questions:
         return []
 
-    # 1. Format each question into a prompt
+    # Format each question into a prompt
     prompts = [
         _format_prompt(q, benchmark_name, tokenizer, enable_thinking, system_prompt)
         for q in questions
     ]
 
-    # 2. Tokenize with padding
+    # Tokenize with padding
     tokenized = tokenizer(
         prompts,
         padding=True,
@@ -169,18 +185,14 @@ def generate_candidates_batch(
     input_ids = tokenized["input_ids"].to(model.device)
     attention_mask = tokenized["attention_mask"].to(model.device)
 
-    # Store original sequence lengths (number of non-pad tokens per prompt)
-    orig_lengths = attention_mask.sum(dim=1).tolist()  # list of ints
+    orig_lengths = attention_mask.sum(dim=1).tolist()
 
-    # 3. Repeat each input `pass_at_k` times for multiple candidates
     if pass_at_k > 1:
         input_ids = input_ids.repeat_interleave(pass_at_k, dim=0)
         attention_mask = attention_mask.repeat_interleave(pass_at_k, dim=0)
         orig_lengths = [l for l in orig_lengths for _ in range(pass_at_k)]
 
-    # 4. Generate
-    # NOTE: presence_penalty is not supported by transformers' generate().
-    # Only repetition_penalty is available.
+    # Generation kwargs
     generation_kwargs = {
         "max_new_tokens": max_new_tokens,
         "temperature": temperature,
@@ -191,6 +203,20 @@ def generate_candidates_batch(
         "pad_token_id": tokenizer.pad_token_id,
         "eos_token_id": tokenizer.eos_token_id,
     }
+
+    # Set up progress bar if requested
+    progress_callback = None
+    if show_progress:
+        # Create a pbar with total = max_new_tokens (or at least 1)
+        pbar = tqdm(
+            total=max_new_tokens,
+            desc=f"Generating {len(questions)} questions",
+            unit="tok",
+            leave=False,
+        )
+        progress_callback = TokenProgressCallback(pbar, max_new_tokens)
+        generation_kwargs["stopping_criteria"] = StoppingCriteriaList([progress_callback])
+
     with torch.no_grad():
         output_ids = model.generate(
             input_ids=input_ids,
@@ -198,18 +224,19 @@ def generate_candidates_batch(
             **generation_kwargs,
         )
 
-    # 5. Decode each output, cutting off the input part
+    if progress_callback is not None:
+        progress_callback.close()  # close the pbar
+
+    # Decode and group candidates
     raw_outputs = []
     for i, (inp, out) in enumerate(zip(input_ids, output_ids)):
         input_len = orig_lengths[i]
-        gen_tokens = out[input_len:]               # generated part only
+        gen_tokens = out[input_len:]
         raw = tokenizer.decode(gen_tokens, skip_special_tokens=True).strip()
         raw_outputs.append(raw)
 
-    # 6. Build Candidate objects
     candidates_flat = []
     for i, raw in enumerate(raw_outputs):
-        # Which original question does this belong to?
         question_idx = i // pass_at_k
         prompt_used = prompts[question_idx]
 
@@ -234,7 +261,6 @@ def generate_candidates_batch(
             )
         )
 
-    # 7. Group by original question
     grouped = []
     for q_idx in range(len(questions)):
         start = q_idx * pass_at_k
@@ -258,6 +284,7 @@ def generate_candidates(
     pass_at_k: int = 1,
     system_prompt: Optional[str] = None,
     max_input_length: int = 4096,
+    show_progress: bool = False,
 ) -> List[GeneratedCandidate]:
     """
     Single‑question wrapper around batched generation.
@@ -276,5 +303,6 @@ def generate_candidates(
         pass_at_k=pass_at_k,
         system_prompt=system_prompt,
         max_input_length=max_input_length,
+        show_progress=show_progress,
     )
     return results[0] if results else []
