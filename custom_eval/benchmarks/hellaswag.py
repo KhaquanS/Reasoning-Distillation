@@ -11,7 +11,7 @@ LABELS = ["A", "B", "C", "D"]
 def load(cache_dir=None, split="validation", max_samples=None, **_):
     """Load HellaSwag dataset."""
     ds, source = try_load_dataset(
-        [{"path": "Rowan/hellaswag", "splits": [split, "validation", "train"]}],
+        [{"path": "Rowan/hellaswag", "splits": [split, "validation", "train", "test"]}],
         cache_dir=cache_dir,
         split=split,
     )
@@ -19,11 +19,25 @@ def load(cache_dir=None, split="validation", max_samples=None, **_):
     examples = []
     if ds is not None:
         for i, row in enumerate(ds):
+            # Get the label; it could be int or string
+            label_val = row.get("label")
+            if label_val is None or label_val == "":
+                # Skip examples with missing label
+                continue
+            try:
+                label_idx = int(label_val)
+            except (ValueError, TypeError):
+                # If conversion fails, skip
+                continue
+            
+            if not (0 <= label_idx < len(LABELS)):
+                continue
+            
             endings = row["endings"]
             choices = "\n".join(f"{label}. {ending}" for label, ending in zip(LABELS, endings))
             context = f"{row.get('ctx_a', '')} {row.get('ctx_b', '')}".strip() or row.get("ctx", "")
             question = f"Choose the most plausible ending.\n\nContext: {context}\n\nChoices:\n{choices}"
-            answer = LABELS[int(row["label"])]
+            answer = LABELS[label_idx]
             examples.append(
                 EvalExample(
                     str(row.get("ind", i)),
