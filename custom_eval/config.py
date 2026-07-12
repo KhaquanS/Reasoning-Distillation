@@ -27,8 +27,7 @@ class ModelSpec:
     load_in_8bit: bool = False
     load_in_4bit: bool = False
     use_flash_attention_2: bool = False
-    # Qwen-specific
-    enable_thinking: bool = True  # For Qwen3.5-4B, True by default; for Qwen3.5-2B, False by default
+    enable_thinking: bool = True
 
 
 @dataclass
@@ -40,15 +39,15 @@ class EvalConfig:
     split: str = "test"
     max_samples: Optional[int] = None
     seed: int = 42
-    # Generation parameters (Qwen best practices)
-    max_new_tokens: int = 32768  # Qwen recommends 32,768 for most queries
+    # Generation parameters
+    max_new_tokens: int = 32768
     temperature: float = 1.0
     top_p: float = 0.95
     top_k: int = 20
     presence_penalty: float = 1.5
     repetition_penalty: float = 1.0
+    pass_at_k: int = 1
     batch_size: int = 1
-    # Benchmark-specific options
     benchmark_options: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
@@ -109,11 +108,9 @@ def load_config(path: str | Path) -> EvalConfig:
     if not isinstance(gen, dict):
         raise ValueError("generation must be a mapping.")
 
-    # Apply Qwen best practices based on thinking mode
-    enable_thinking_global = gen.get("enable_thinking")
-    if enable_thinking_global is None:
-        # If not specified, use model-specific defaults
-        pass
+    pass_at_k = int(gen.get("pass_at_k", 1))
+    if pass_at_k <= 0:
+        raise ValueError("generation.pass_at_k must be positive.")
 
     return EvalConfig(
         models=models,
@@ -123,13 +120,13 @@ def load_config(path: str | Path) -> EvalConfig:
         split=str(raw.get("split", "test")),
         max_samples=raw.get("max_samples"),
         seed=int(raw.get("seed", 42)),
-        # Generation parameters with Qwen defaults
         max_new_tokens=int(gen.get("max_new_tokens", 32768)),
         temperature=float(gen.get("temperature", 1.0)),
         top_p=float(gen.get("top_p", 0.95)),
         top_k=int(gen.get("top_k", 20)),
         presence_penalty=float(gen.get("presence_penalty", 1.5)),
         repetition_penalty=float(gen.get("repetition_penalty", 1.0)),
+        pass_at_k=pass_at_k,
         batch_size=int(gen.get("batch_size", 1)),
         benchmark_options=raw.get("benchmark_options", {}) or {},
     )

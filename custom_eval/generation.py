@@ -137,7 +137,6 @@ def generate_candidates_batch(
     temperature: float = 1.0,
     top_p: float = 0.95,
     top_k: int = 20,
-    presence_penalty: float = 1.5,
     repetition_penalty: float = 1.0,
     pass_at_k: int = 1,
     system_prompt: Optional[str] = None,
@@ -180,13 +179,14 @@ def generate_candidates_batch(
         orig_lengths = [l for l in orig_lengths for _ in range(pass_at_k)]
 
     # 4. Generate
+    # NOTE: presence_penalty is not supported by transformers' generate().
+    # Only repetition_penalty is available.
     generation_kwargs = {
         "max_new_tokens": max_new_tokens,
         "temperature": temperature,
         "top_p": top_p,
         "top_k": top_k,
         "repetition_penalty": repetition_penalty,
-        "presence_penalty": presence_penalty,
         "do_sample": temperature > 0.0,
         "pad_token_id": tokenizer.pad_token_id,
         "eos_token_id": tokenizer.eos_token_id,
@@ -254,7 +254,6 @@ def generate_candidates(
     temperature: float = 1.0,
     top_p: float = 0.95,
     top_k: int = 20,
-    presence_penalty: float = 1.5,
     repetition_penalty: float = 1.0,
     pass_at_k: int = 1,
     system_prompt: Optional[str] = None,
@@ -273,7 +272,6 @@ def generate_candidates(
         temperature=temperature,
         top_p=top_p,
         top_k=top_k,
-        presence_penalty=presence_penalty,
         repetition_penalty=repetition_penalty,
         pass_at_k=pass_at_k,
         system_prompt=system_prompt,

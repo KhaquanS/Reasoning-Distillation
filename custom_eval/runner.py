@@ -1,13 +1,12 @@
 """
-Main evaluation runner with batched inference.
+Main evaluation runner with batched inference and pass@k support.
 """
 
 import json
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-import torch
 from tqdm import tqdm
 
 from custom_eval.benchmarks import load_benchmark
@@ -35,6 +34,7 @@ def run_evaluation(config: EvalConfig) -> List[Dict[str, Any]]:
         print(f"Loading model: {model_spec.name} ({model_spec.checkpoint})")
         print(f"Thinking mode: {'Enabled' if model_spec.enable_thinking else 'Disabled'}")
         print(f"Batch size: {config.batch_size}")
+        print(f"Pass@k: {config.pass_at_k}")
         print(f"{'='*60}")
 
         model, tokenizer = load_model_and_tokenizer(model_spec, config.cache_dir)
@@ -43,7 +43,6 @@ def run_evaluation(config: EvalConfig) -> List[Dict[str, Any]]:
         for benchmark_name in config.benchmarks:
             print(f"\n--- Running {benchmark_name} ---")
 
-            # Load benchmark data
             benchmark = load_benchmark(
                 benchmark_name,
                 cache_dir=config.cache_dir,
@@ -61,7 +60,6 @@ def run_evaluation(config: EvalConfig) -> List[Dict[str, Any]]:
             correct_count = 0
             started = time.time()
 
-            # Process examples in batches
             batch_size = config.batch_size
             for i in tqdm(range(0, total, batch_size), desc=f"{model_spec.name}/{benchmark_name}"):
                 batch_examples = examples[i:i+batch_size]
@@ -78,17 +76,14 @@ def run_evaluation(config: EvalConfig) -> List[Dict[str, Any]]:
                     temperature=config.temperature,
                     top_p=config.top_p,
                     top_k=config.top_k,
-                    presence_penalty=config.presence_penalty,
                     repetition_penalty=config.repetition_penalty,
-                    pass_at_k=1,  # Pass@k is not fully batched yet, but we keep it as 1 for now
+                    pass_at_k=config.pass_at_k,
                     system_prompt=None,
-                    max_input_length=4096,  # safe limit; could be made configurable
+                    max_input_length=4096,
                 )
 
                 # Process each example in the batch
                 for ex, candidates in zip(batch_examples, candidates_per_question):
-                    # candidates is a list of GeneratedCandidate (length pass_at_k)
-                    # We currently only support pass_at_k=1 in batch mode; but we can handle multiple
                     candidate_records = []
                     passed = False
                     for idx, cand in enumerate(candidates):
@@ -120,12 +115,12 @@ def run_evaluation(config: EvalConfig) -> List[Dict[str, Any]]:
                 "num_examples": total,
                 "score": correct_count / total if total else 0.0,
                 "correct": correct_count,
+                "pass_at_k": config.pass_at_k,
                 "enable_thinking": model_spec.enable_thinking,
                 "max_new_tokens": config.max_new_tokens,
                 "temperature": config.temperature,
                 "top_p": config.top_p,
                 "top_k": config.top_k,
-                "presence_penalty": config.presence_penalty,
                 "repetition_penalty": config.repetition_penalty,
                 "batch_size": config.batch_size,
                 "elapsed_seconds": round(elapsed, 3),
