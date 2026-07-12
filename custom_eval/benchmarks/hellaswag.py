@@ -11,7 +11,7 @@ LABELS = ["A", "B", "C", "D"]
 def load(cache_dir=None, split="validation", max_samples=None, **_):
     """Load HellaSwag dataset."""
     ds, source = try_load_dataset(
-        [{"path": "Rowan/hellaswag", "splits": [split, "validation", "train", "test"]}],
+        [{"path": "Rowan/hellaswag", "splits": [split, "validation", "train"]}],
         cache_dir=cache_dir,
         split=split,
     )
@@ -19,18 +19,15 @@ def load(cache_dir=None, split="validation", max_samples=None, **_):
     examples = []
     if ds is not None:
         for i, row in enumerate(ds):
-            # Get the label; it could be int or string
-            label_val = row.get("label")
-            if label_val is None or label_val == "":
-                # Skip examples with missing label
+            # Skip rows with missing or empty label
+            label = row.get("label")
+            if label is None or label == "":
                 continue
             try:
-                label_idx = int(label_val)
+                label_idx = int(label)
             except (ValueError, TypeError):
-                # If conversion fails, skip
                 continue
-            
-            if not (0 <= label_idx < len(LABELS)):
+            if label_idx < 0 or label_idx >= len(LABELS):
                 continue
             
             endings = row["endings"]

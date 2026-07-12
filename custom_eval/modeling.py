@@ -48,7 +48,9 @@ def load_model_and_tokenizer(
     """
     # Determine if checkpoint is a local path or HF model ID
     checkpoint_path = Path(spec.checkpoint).expanduser()
-    if checkpoint_path.exists() and (checkpoint_path / "config.json").exists():
+    is_local = checkpoint_path.exists() and (checkpoint_path / "config.json").exists()
+    
+    if is_local:
         model_ref = str(checkpoint_path)
     else:
         model_ref = spec.checkpoint
@@ -56,23 +58,29 @@ def load_model_and_tokenizer(
     tokenizer_ref = spec.tokenizer or model_ref
     
     # Load tokenizer with left padding for batched generation
-    tokenizer = AutoTokenizer.from_pretrained(
-        tokenizer_ref,
-        cache_dir=cache_dir,
-        trust_remote_code=spec.trust_remote_code,
-        padding_side="left",      # <-- CRITICAL for batched autoregressive generation
-    )
+    # If local, force local_files_only to avoid HF hub validation
+    tokenizer_kwargs = {
+        "cache_dir": cache_dir,
+        "trust_remote_code": spec.trust_remote_code,
+        "padding_side": "left",
+        "local_files_only": is_local,  # prevent download attempts for local paths
+    }
+    
+    # Check if tokenizer_ref is a local path that exists, but we might need to adjust.
+    # Actually, for local path, from_pretrained should work with local_files_only=True.
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_ref, **tokenizer_kwargs)
     
     # Set padding token if not present
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     
     # Build model loading kwargs
-    kwargs = {
+    model_kwargs = {
         "cache_dir": cache_dir,
         "trust_remote_code": spec.trust_remote_code,
         "torch_dtype": resolve_dtype(spec.dtype),
         "device_map": spec.device_map,
+        "local_files_only": is_local,  # prevent download attempts
     }
     
     # Quantization
@@ -80,12 +88,12 @@ def load_model_and_tokenizer(
         raise ValueError("Cannot use both load_in_8bit and load_in_4bit")
     
     if spec.load_in_8bit:
-        kwargs["quantization_config"] = BitsAndBytesConfig(
+        model_kwargs["quantization_config"] = BitsAndBytesConfig(
             load_in_8bit=True,
             bnb_8bit_compute_dtype=resolve_dtype(spec.dtype),
         )
     elif spec.load_in_4bit:
-        kwargs["quantization_config"] = BitsAndBytesConfig(
+        model_kwargs["quantization_config"] = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_compute_dtype=resolve_dtype(spec.dtype),
             bnb_4bit_use_double_quant=True,
@@ -94,10 +102,10 @@ def load_model_and_tokenizer(
     
     # Flash Attention
     if spec.use_flash_attention_2:
-        kwargs["attn_implementation"] = "flash_attention_2"
+        model_kwargs["attn_implementation"] = "flash_attention_2"
     
     # Load model
-    model = AutoModelForCausalLM.from_pretrained(model_ref, **kwargs)
+    model = AutoModelForCausalLM.from_pretrained(model_ref, **model_kwargs)
     model.eval()
     
     return model, tokenizer
