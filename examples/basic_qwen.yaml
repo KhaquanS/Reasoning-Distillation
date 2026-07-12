@@ -1,0 +1,67 @@
+# Example evaluation configuration for Qwen models
+
+models:
+  - name: qwen-3.5-2b
+    checkpoint: Qwen/Qwen3.5-2B
+    trust_remote_code: true
+    dtype: bfloat16
+    device_map: auto
+    enable_thinking: false  # Qwen3.5-2B defaults to non-thinking mode
+
+  - name: qwen-3.5-2b-reasondistill-no_think
+    checkpoint: /workspace/qwen-khaquanS-distillations/qwen_reasondistill/step_80
+    trust_remote_code: true
+    dtype: bfloat16
+    device_map: auto
+    enable_thinking: false
+
+  - name: qwen-3.5-2b-reasondistill-think
+    checkpoint: /workspace/qwen-khaquanS-distillations/qwen_reasondistill/step_80
+    trust_remote_code: true
+    dtype: bfloat16
+    device_map: auto
+    enable_thinking: true
+
+  - name: qwen-3.5-4b
+    checkpoint: Qwen/Qwen3.5-4B
+    trust_remote_code: true
+    dtype: bfloat16
+    device_map: auto
+    enable_thinking: true   # Qwen3.5-4B defaults to thinking mode
+
+
+benchmarks:
+  - gsm8k
+  - mmlu
+  - arc-c
+  - hellaswag
+
+output_dir: ./eval_outputs
+cache_dir: ./cache
+split: test
+max_samples: null  # Set to null for full dataset
+seed: 42
+
+# Generation parameters following Qwen best practices
+generation:
+  max_new_tokens: 2048  # Qwen recommends 32,768 for most queries
+  temperature: 1.0
+  top_p: 0.95
+  top_k: 20
+  presence_penalty: 1.5
+  repetition_penalty: 1.0
+  batch_size: 4
+
+# Benchmark-specific options
+benchmark_options:
+  mmlu:
+    subject: all  
+    max_new_tokens: 2048
+  gpqa:
+    subset: gpqa_diamond
+    max_new_tokens: 256
+  arc-c:
+    max_new_tokens: 256
+  hellaswag:
+    max_new_tokens: 256
+
