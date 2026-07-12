@@ -24,6 +24,9 @@ def run_evaluation(config: EvalConfig) -> List[Dict[str, Any]]:
     """
     Run the full evaluation with batched example processing.
     """
+    print(f"Model is on: {model.device}")
+    print(f"Memory footprint: {model.get_memory_footprint() / 1e9:.2f} GB")
+
     output_dir = Path(config.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
