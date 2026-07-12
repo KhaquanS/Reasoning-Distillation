@@ -45,13 +45,6 @@ def load_model_and_tokenizer(
 ) -> Tuple[PreTrainedModel, PreTrainedTokenizer]:
     """
     Load a model and tokenizer from Hugging Face or local path.
-    
-    Args:
-        spec: Model specification
-        cache_dir: Cache directory for downloaded models
-    
-    Returns:
-        Tuple of (model, tokenizer)
     """
     # Determine if checkpoint is a local path or HF model ID
     checkpoint_path = Path(spec.checkpoint).expanduser()
@@ -62,11 +55,12 @@ def load_model_and_tokenizer(
     
     tokenizer_ref = spec.tokenizer or model_ref
     
-    # Load tokenizer
+    # Load tokenizer with left padding for batched generation
     tokenizer = AutoTokenizer.from_pretrained(
         tokenizer_ref,
         cache_dir=cache_dir,
         trust_remote_code=spec.trust_remote_code,
+        padding_side="left",      # <-- CRITICAL for batched autoregressive generation
     )
     
     # Set padding token if not present
