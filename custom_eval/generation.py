@@ -10,6 +10,7 @@ import torch
 from tqdm import tqdm
 from transformers import PreTrainedModel, PreTrainedTokenizer, StoppingCriteria, StoppingCriteriaList
 
+from custom_eval.prompts.qwen_formatter import QwenChatFormatter
 
 @dataclass
 class GeneratedCandidate:

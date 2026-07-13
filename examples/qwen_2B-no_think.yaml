@@ -6,28 +6,35 @@ models:
     trust_remote_code: true
     dtype: bfloat16
     device_map: auto
-    enable_thinking: false  # Qwen3.5-2B defaults to non-thinking mode
+    enable_thinking: false  
 
-  - name: qwen-3.5-2b-reasondistill-no_think
-    checkpoint: /workspace/qwen-khaquanS-distillations/qwen_reasondistill/step_80
+  - name: qwen-3.5-2b-reasondistill-step_20
+    checkpoint: qwen_reasondistill/step_20
     trust_remote_code: true
     dtype: bfloat16
     device_map: auto
     enable_thinking: false
 
-  - name: qwen-3.5-2b-reasondistill-think
-    checkpoint: /workspace/qwen-khaquanS-distillations/qwen_reasondistill/step_80
+  - name: qwen-3.5-2b-reasondistill-step_40
+    checkpoint: qwen_reasondistill/step_40
     trust_remote_code: true
     dtype: bfloat16
     device_map: auto
-    enable_thinking: true
+    enable_thinking: false
 
-  - name: qwen-3.5-4b
-    checkpoint: Qwen/Qwen3.5-4B
+  - name: qwen-3.5-2b-reasondistill-step_60
+    checkpoint: qwen_reasondistill/step_60
     trust_remote_code: true
     dtype: bfloat16
     device_map: auto
-    enable_thinking: true   # Qwen3.5-4B defaults to thinking mode
+    enable_thinking: false
+
+  - name: qwen-3.5-2b-reasondistill-step_80
+    checkpoint: qwen_reasondistill/step_80
+    trust_remote_code: true
+    dtype: bfloat16
+    device_map: auto
+    enable_thinking: false
 
 
 benchmarks:
@@ -39,7 +46,7 @@ benchmarks:
 output_dir: ./eval_outputs
 cache_dir: ./cache
 split: test
-max_samples: null  # Set to null for full dataset
+max_samples: 1000
 seed: 42
 
 # Generation parameters following Qwen best practices
@@ -56,12 +63,13 @@ generation:
 benchmark_options:
   mmlu:
     subject: all  
-    max_new_tokens: 2048
+    max_new_tokens: 4096
   gpqa:
     subset: gpqa_diamond
-    max_new_tokens: 256
+    max_new_tokens: 1024
   arc-c:
-    max_new_tokens: 256
+    max_new_tokens: 1024
   hellaswag:
-    max_new_tokens: 256
+    max_new_tokens: 1024
+    split: validation
 
