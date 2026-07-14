@@ -10,14 +10,14 @@ experiment:
 
 data:
   dataset: amdeepseek
-  max_samples: 50_000 # ~100M tokens in total 
+  max_samples: 20_000 # ~100M tokens in total 
   cache_dir: ./cache
 
 method:
   name: reasondistill
-  sae_checkpoint: /workspace/Reasoning-Distillation/sae.pt
-  reason_score_path: /workspace/Reasoning-Distillation/reasonscore.pt # replace after scoring SAE features
-  reasoning_neuron_count: 196
+  sae_checkpoint: /workspace/Reasoning-Distillation/sae_weights/qwen-3.5-4B-L16_16x-SAE/sae.pt
+  reason_score_path: /workspace/Reasoning-Distillation/sae_weights/qwen-3.5-4B-L16_16x-SAE/reasonscore.pt # replace after scoring SAE features
+  reasoning_neuron_count: 512
 
 model:
   teacher: Qwen/Qwen3.5-4B
@@ -36,12 +36,12 @@ alignment:
 training:
   max_length: 4096
   batch_size: 1
-  accum_steps: 128
+  accum_steps: 64
   epochs: 1
 
   lr: 4.0e-5
   min_lr: 2.0e-6
-  warmup_ratio: 0.03
+  warmup_ratio: 0.10
   weight_decay: 0.01
   max_grad_norm: 1.0
   adam_betas: [0.9, 0.95]
@@ -50,12 +50,12 @@ loss:
   temperature: 4.0
   alpha_kd: 0.5
   alpha_align: 0.1
-  beta_ce: 0.5
+  beta_ce: 0.8
 
  
 logging:
   checkpoint_dir: ./checkpoints/qwen_reasondistill
   log_dir: ./logs/qwen_reasondistill
-  loss_log_entries_per_epoch: 390
-  save_every_n_steps: 150
+  loss_log_entries_per_epoch: 350
+  save_every_n_steps: 100
  
