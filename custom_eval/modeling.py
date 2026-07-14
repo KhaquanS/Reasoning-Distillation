@@ -7,6 +7,7 @@ from typing import Optional, Tuple, Union
 
 import torch
 from transformers import (
+    AutoConfig,
     AutoModelForCausalLM,
     AutoTokenizer,
     BitsAndBytesConfig,
@@ -120,6 +121,40 @@ def load_model_and_tokenizer(
     # Flash Attention
     if spec.use_flash_attention_2:
         model_kwargs["attn_implementation"] = "flash_attention_2"
+
+    # ----- FIX: Handle missing model_type in config -----
+    # Try to load config from the checkpoint, but if it fails or lacks model_type,
+    # fall back to the base Qwen config.
+    base_model_id = "Qwen/Qwen3.5-2B"  # base model for architecture
+    try:
+        # Try loading config from the checkpoint (with subfolder if any)
+        config = AutoConfig.from_pretrained(model_ref, **model_kwargs)
+        # Check if model_type is present; if not, set it
+        if not hasattr(config, "model_type") or config.model_type is None:
+            # Load base config and copy over the attributes we need
+            base_config = AutoConfig.from_pretrained(
+                base_model_id,
+                cache_dir=cache_dir,
+                trust_remote_code=spec.trust_remote_code,
+            )
+            # Override with our checkpoint's config but keep the model_type
+            # We'll merge: use base config and then update with our config's attributes
+            for key, value in config.to_dict().items():
+                if key != "model_type":
+                    setattr(base_config, key, value)
+            config = base_config
+    except Exception as e:
+        # If loading config from checkpoint fails entirely, use base config
+        print(f"Warning: Could not load config from {model_ref}, falling back to {base_model_id}. Error: {e}")
+        config = AutoConfig.from_pretrained(
+            base_model_id,
+            cache_dir=cache_dir,
+            trust_remote_code=spec.trust_remote_code,
+        )
+        # Also set any subfolder? The base config doesn't have subfolder; we rely on model_kwargs for that.
+
+    # Pass the config to model loading
+    model_kwargs["config"] = config
 
     # Load model
     model = AutoModelForCausalLM.from_pretrained(model_ref, **model_kwargs)
