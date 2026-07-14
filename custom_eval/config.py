@@ -21,6 +21,7 @@ class ModelSpec:
     name: str
     checkpoint: str
     tokenizer: Optional[str] = None
+    subfolder: Optional[str] = None          # <-- NEW: subfolder inside repo
     trust_remote_code: bool = True
     dtype: str = "auto"
     device_map: str = "auto"
@@ -73,11 +74,13 @@ def load_config(path: str | Path) -> EvalConfig:
         if not checkpoint:
             raise ValueError("Each model needs checkpoint, path, or model_id.")
 
-        # Qwen-specific: determine default thinking mode based on model size
+        # Model name
         model_name = item.get("name") or Path(str(checkpoint)).name
+
+        # Determine default thinking mode based on model size if not explicitly set
         enable_thinking = item.get("enable_thinking")
         if enable_thinking is None:
-            # Qwen3.5-4B defaults to thinking mode, Qwen3.5-2B defaults to non-thinking
+            # If checkpoint contains "4b" or "4B" we default to True (thinking), else False
             enable_thinking = "4b" in str(checkpoint).lower() or "4B" in str(checkpoint).lower()
 
         models.append(
@@ -85,6 +88,7 @@ def load_config(path: str | Path) -> EvalConfig:
                 name=model_name,
                 checkpoint=str(checkpoint),
                 tokenizer=item.get("tokenizer"),
+                subfolder=item.get("subfolder"),          # <-- NEW
                 trust_remote_code=bool(item.get("trust_remote_code", True)),
                 dtype=str(item.get("dtype", "auto")),
                 device_map=str(item.get("device_map", "auto")),

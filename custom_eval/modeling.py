@@ -1,5 +1,5 @@
 """
-Model loading utilities with support for HF models and local checkpoints.
+Model loading utilities with support for HF models, local checkpoints, and subfolders.
 """
 
 from pathlib import Path
@@ -21,7 +21,7 @@ def resolve_dtype(dtype_name: str) -> Union[str, torch.dtype]:
     """Convert dtype string to torch dtype."""
     if dtype_name == "auto":
         return "auto"
-    
+
     mapping = {
         "float16": torch.float16,
         "fp16": torch.float16,
@@ -32,11 +32,17 @@ def resolve_dtype(dtype_name: str) -> Union[str, torch.dtype]:
         "float64": torch.float64,
         "fp64": torch.float64,
     }
-    
+
     if dtype_name not in mapping:
         raise ValueError(f"Unsupported dtype '{dtype_name}'. Supported: {list(mapping.keys())}")
-    
+
     return mapping[dtype_name]
+
+
+def is_local_path(path: str) -> bool:
+    """Check if the given path is a local directory containing config.json."""
+    p = Path(path).expanduser()
+    return p.exists() and p.is_dir() and (p / "config.json").exists()
 
 
 def load_model_and_tokenizer(
@@ -44,49 +50,60 @@ def load_model_and_tokenizer(
     cache_dir: Optional[str] = None,
 ) -> Tuple[PreTrainedModel, PreTrainedTokenizer]:
     """
-    Load a model and tokenizer from Hugging Face or local path.
+    Load a model and tokenizer from Hugging Face, a local path, or a subfolder inside a repo.
     """
-    # Determine if checkpoint is a local path or HF model ID
+    # Determine if checkpoint is a local folder or a Hub repo ID
     checkpoint_path = Path(spec.checkpoint).expanduser()
-    is_local = checkpoint_path.exists() and (checkpoint_path / "config.json").exists()
-    
-    if is_local:
+    if checkpoint_path.exists() and (checkpoint_path / "config.json").exists():
         model_ref = str(checkpoint_path)
+        is_local = True
     else:
         model_ref = spec.checkpoint
-    
+        is_local = False
+
     tokenizer_ref = spec.tokenizer or model_ref
-    
-    # Load tokenizer with left padding for batched generation
-    # If local, force local_files_only to avoid HF hub validation
+
+    # Build tokenizer kwargs
     tokenizer_kwargs = {
         "cache_dir": cache_dir,
         "trust_remote_code": spec.trust_remote_code,
-        "padding_side": "left",
-        "local_files_only": is_local,  # prevent download attempts for local paths
+        "padding_side": "left",          # required for batched generation
     }
-    
-    # Check if tokenizer_ref is a local path that exists, but we might need to adjust.
-    # Actually, for local path, from_pretrained should work with local_files_only=True.
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_ref, **tokenizer_kwargs)
-    
-    # Set padding token if not present
+    if spec.subfolder:
+        tokenizer_kwargs["subfolder"] = spec.subfolder
+
+    if is_local:
+        tokenizer_kwargs["local_files_only"] = True
+
+    # Load tokenizer with retry fallback
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_ref, **tokenizer_kwargs)
+    except Exception as e:
+        if is_local:
+            # If local loading fails, try without local_files_only (might be a repo)
+            tokenizer_kwargs.pop("local_files_only", None)
+            tokenizer = AutoTokenizer.from_pretrained(tokenizer_ref, **tokenizer_kwargs)
+        else:
+            raise e
+
+    # Set padding token if missing
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    
+
     # Build model loading kwargs
     model_kwargs = {
         "cache_dir": cache_dir,
         "trust_remote_code": spec.trust_remote_code,
         "torch_dtype": resolve_dtype(spec.dtype),
         "device_map": spec.device_map,
-        "local_files_only": is_local,  # prevent download attempts
     }
-    
+    if spec.subfolder:
+        model_kwargs["subfolder"] = spec.subfolder
+
     # Quantization
     if spec.load_in_8bit and spec.load_in_4bit:
         raise ValueError("Cannot use both load_in_8bit and load_in_4bit")
-    
+
     if spec.load_in_8bit:
         model_kwargs["quantization_config"] = BitsAndBytesConfig(
             load_in_8bit=True,
@@ -99,13 +116,13 @@ def load_model_and_tokenizer(
             bnb_4bit_use_double_quant=True,
             bnb_4bit_quant_type="nf4",
         )
-    
+
     # Flash Attention
     if spec.use_flash_attention_2:
         model_kwargs["attn_implementation"] = "flash_attention_2"
-    
+
     # Load model
     model = AutoModelForCausalLM.from_pretrained(model_ref, **model_kwargs)
     model.eval()
-    
+
     return model, tokenizer

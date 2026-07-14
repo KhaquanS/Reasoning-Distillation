@@ -72,7 +72,7 @@ shellingham==1.5.4
 six==1.17.0
 sympy==1.14.0
 tokenizers==0.22.2
-torch==2.12.1
+torch==2.12.8
 tqdm==4.68.3
 transformers==5.12.1
 triton==3.7.1
