@@ -62,15 +62,23 @@ def load_model_and_tokenizer(
         model_ref = spec.checkpoint
         is_local = False
 
-    tokenizer_ref = spec.tokenizer or model_ref
+    # ----- TOKENIZER LOADING -----
+    # If a separate tokenizer is specified, use it without subfolder.
+    # Otherwise, use the checkpoint path (with subfolder if provided).
+    if spec.tokenizer is not None:
+        tokenizer_ref = spec.tokenizer
+        use_subfolder = False   # do not apply subfolder to tokenizer
+    else:
+        tokenizer_ref = model_ref
+        use_subfolder = True    # apply subfolder to tokenizer if present
 
-    # Build tokenizer kwargs
     tokenizer_kwargs = {
         "cache_dir": cache_dir,
         "trust_remote_code": spec.trust_remote_code,
         "padding_side": "left",          # required for batched generation
+        "use_fast": True,                # prefer fast tokenizer
     }
-    if spec.subfolder:
+    if use_subfolder and spec.subfolder:
         tokenizer_kwargs["subfolder"] = spec.subfolder
 
     if is_local:
@@ -91,7 +99,7 @@ def load_model_and_tokenizer(
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # Build model loading kwargs
+    # ----- MODEL LOADING -----
     model_kwargs = {
         "cache_dir": cache_dir,
         "trust_remote_code": spec.trust_remote_code,
@@ -138,7 +146,6 @@ def load_model_and_tokenizer(
                 trust_remote_code=spec.trust_remote_code,
             )
             # Override with our checkpoint's config but keep the model_type
-            # We'll merge: use base config and then update with our config's attributes
             for key, value in config.to_dict().items():
                 if key != "model_type":
                     setattr(base_config, key, value)
@@ -151,7 +158,6 @@ def load_model_and_tokenizer(
             cache_dir=cache_dir,
             trust_remote_code=spec.trust_remote_code,
         )
-        # Also set any subfolder? The base config doesn't have subfolder; we rely on model_kwargs for that.
 
     # Pass the config to model loading
     model_kwargs["config"] = config
