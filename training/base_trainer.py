@@ -31,12 +31,10 @@ class BaseTrainer:
         self.aligner = aligner
         self.config = config
 
-        # --- COLLECT PARAMETERS BEFORE COMPILATION ---
+        # Set up optimizer
         params = list(student.parameters())
         if aligner is not None:
             params += list(aligner.parameters())
-        
-        # FIX: Use actual arguments, not ellipsis
         self.optimizer = torch.optim.AdamW(
             params,
             lr=config.lr,
@@ -44,25 +42,9 @@ class BaseTrainer:
             weight_decay=config.weight_decay
         )
 
-        # --- COMPILE STUDENT AND ALIGNER (AFTER OPTIMIZER CREATION) ---
-        if hasattr(torch, 'compile') and self.config.device == "cuda":
-            try:
-                print("Compiling student model with torch.compile...")
-                self.student = torch.compile(self.student, mode="reduce-overhead", dynamic=True)
-                if self.aligner is not None:
-                    print("Compiling aligner as well...")
-                    self.aligner = torch.compile(self.aligner, mode="reduce-overhead", dynamic=True)
-            except Exception as e:
-                print(f"torch.compile failed: {e}. Continuing without compilation.")
-        else:
-            if self.config.device == "cuda":
-                print("torch.compile not available – using eager execution.")
-            else:
-                print("Not on CUDA – skipping torch.compile.")
-
         self.scheduler = None
         self.start_epoch = 0
-        self.global_step = 0
+        self.global_step = 0  # counts optimizer steps (not batches), across epochs
 
     def _collate(self, batch):
         """Collate function for DataLoader."""
