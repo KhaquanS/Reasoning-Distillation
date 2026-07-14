@@ -31,10 +31,12 @@ class BaseTrainer:
         self.aligner = aligner
         self.config = config
 
-        # Collect parameters for optimizer (before compilation)
+        # --- COLLECT PARAMETERS BEFORE COMPILATION ---
         params = list(student.parameters())
         if aligner is not None:
             params += list(aligner.parameters())
+        
+        # FIX: Use actual arguments, not ellipsis
         self.optimizer = torch.optim.AdamW(
             params,
             lr=config.lr,
@@ -42,21 +44,36 @@ class BaseTrainer:
             weight_decay=config.weight_decay
         )
 
-        # Now compile student and aligner (if possible)
+        # --- COMPILE STUDENT AND ALIGNER (AFTER OPTIMIZER CREATION) ---
         if hasattr(torch, 'compile') and self.config.device == "cuda":
             try:
-                print("Compiling student model...")
+                print("Compiling student model with torch.compile...")
                 self.student = torch.compile(self.student, mode="reduce-overhead", dynamic=True)
                 if self.aligner is not None:
-                    print("Compiling aligner...")
+                    print("Compiling aligner as well...")
                     self.aligner = torch.compile(self.aligner, mode="reduce-overhead", dynamic=True)
             except Exception as e:
                 print(f"torch.compile failed: {e}. Continuing without compilation.")
+        else:
+            if self.config.device == "cuda":
+                print("torch.compile not available – using eager execution.")
+            else:
+                print("Not on CUDA – skipping torch.compile.")
 
-        # Rest of initialization (scheduler, etc.)
         self.scheduler = None
         self.start_epoch = 0
         self.global_step = 0
+
+    def _collate(self, batch):
+        """Collate function for DataLoader."""
+        texts = [item["text"] for item in batch]
+        return self.tokenizer(
+            texts,
+            padding=True,
+            truncation=True,
+            max_length=self.config.max_length,
+            return_tensors="pt"
+        )
 
     def _save_checkpoint(self, epoch, global_step=None):
         """
