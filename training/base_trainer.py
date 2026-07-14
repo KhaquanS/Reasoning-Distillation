@@ -31,7 +31,13 @@ class BaseTrainer:
         self.aligner = aligner
         self.config = config
 
-        # --- New: Compile student and aligner ---
+        # Collect parameters for optimizer (before compilation)
+        params = list(student.parameters())
+        if aligner is not None:
+            params += list(aligner.parameters())
+        self.optimizer = torch.optim.AdamW(params, ...)
+
+        # Now compile student and aligner (if possible)
         if hasattr(torch, 'compile') and self.config.device == "cuda":
             try:
                 print("Compiling student model...")
@@ -41,28 +47,12 @@ class BaseTrainer:
                     self.aligner = torch.compile(self.aligner, mode="reduce-overhead", dynamic=True)
             except Exception as e:
                 print(f"torch.compile failed: {e}. Continuing without compilation.")
-        # ------------------------------------------
 
-        # Optimizer setup (unchanged)
-        params = list(student.parameters())
-        if aligner is not None:
-            params += list(aligner.parameters())
-        self.optimizer = torch.optim.AdamW(...)
-
+        # Rest of initialization (scheduler, etc.)
         self.scheduler = None
         self.start_epoch = 0
         self.global_step = 0
-        def _collate(self, batch):
-            """Collate function for DataLoader."""
-            texts = [item["text"] for item in batch]
-            return self.tokenizer(
-                texts,
-                padding=True,
-                truncation=True,
-                max_length=self.config.max_length,
-                return_tensors="pt"
-            )
-
+        
     def _save_checkpoint(self, epoch, global_step=None):
         """
         Save checkpoint including student, aligner (if any), optimizer, scheduler.
