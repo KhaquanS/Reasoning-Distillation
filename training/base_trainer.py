@@ -35,7 +35,12 @@ class BaseTrainer:
         params = list(student.parameters())
         if aligner is not None:
             params += list(aligner.parameters())
-        self.optimizer = torch.optim.AdamW(params, ...)
+        self.optimizer = torch.optim.AdamW(
+            params,
+            lr=config.lr,
+            betas=config.adam_betas,
+            weight_decay=config.weight_decay
+        )
 
         # Now compile student and aligner (if possible)
         if hasattr(torch, 'compile') and self.config.device == "cuda":
@@ -52,7 +57,7 @@ class BaseTrainer:
         self.scheduler = None
         self.start_epoch = 0
         self.global_step = 0
-        
+
     def _save_checkpoint(self, epoch, global_step=None):
         """
         Save checkpoint including student, aligner (if any), optimizer, scheduler.
