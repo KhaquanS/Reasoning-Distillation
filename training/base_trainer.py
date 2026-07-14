@@ -31,31 +31,37 @@ class BaseTrainer:
         self.aligner = aligner
         self.config = config
 
-        # Set up optimizer
+        # --- New: Compile student and aligner ---
+        if hasattr(torch, 'compile') and self.config.device == "cuda":
+            try:
+                print("Compiling student model...")
+                self.student = torch.compile(self.student, mode="reduce-overhead", dynamic=True)
+                if self.aligner is not None:
+                    print("Compiling aligner...")
+                    self.aligner = torch.compile(self.aligner, mode="reduce-overhead", dynamic=True)
+            except Exception as e:
+                print(f"torch.compile failed: {e}. Continuing without compilation.")
+        # ------------------------------------------
+
+        # Optimizer setup (unchanged)
         params = list(student.parameters())
         if aligner is not None:
             params += list(aligner.parameters())
-        self.optimizer = torch.optim.AdamW(
-            params,
-            lr=config.lr,
-            betas=config.adam_betas,
-            weight_decay=config.weight_decay
-        )
+        self.optimizer = torch.optim.AdamW(...)
 
         self.scheduler = None
         self.start_epoch = 0
-        self.global_step = 0  # counts optimizer steps (not batches), across epochs
-
-    def _collate(self, batch):
-        """Collate function for DataLoader."""
-        texts = [item["text"] for item in batch]
-        return self.tokenizer(
-            texts,
-            padding=True,
-            truncation=True,
-            max_length=self.config.max_length,
-            return_tensors="pt"
-        )
+        self.global_step = 0
+        def _collate(self, batch):
+            """Collate function for DataLoader."""
+            texts = [item["text"] for item in batch]
+            return self.tokenizer(
+                texts,
+                padding=True,
+                truncation=True,
+                max_length=self.config.max_length,
+                return_tensors="pt"
+            )
 
     def _save_checkpoint(self, epoch, global_step=None):
         """
