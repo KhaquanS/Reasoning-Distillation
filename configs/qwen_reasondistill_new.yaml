@@ -1,0 +1,61 @@
+# Train ReasonDistill from the Qwen teacher into the Qwen math student.
+# First train the SAE with configs/qwen_sae.yaml, then generate reason scores
+# for that SAE and set method.reason_score_path below.
+# Run:
+#   python scripts/train.py --config configs/qwen_reasondistill.yaml
+
+experiment:
+  name: reasondistill_qwen
+  seed: 42
+
+data:
+  dataset: amdeepseek
+  max_samples: 50_000 # ~100M tokens in total
+  cache_dir: ./cache
+
+method:
+  name: reasondistill
+  sae_checkpoint: ./checkpoints/qwen_sae_layer16_16x/step_8000/sae.pt
+  reason_score_path: ./checkpoints/qwen_sae_layer16_16x/reasonscore.pt # replace after scoring SAE features
+  reasoning_neuron_count: 196
+
+model:
+  teacher: Qwen/Qwen3.5-4B
+  student: Qwen/Qwen3.5-2B
+  teacher_quantize_8bit: true
+  student_checkpoint: null
+
+alignment:
+  teacher_align_layer: 16
+  student_align_layer: 14
+  target_norm: 64.0
+  reason_active_threshold: 0.0
+  reason_presence_weight: 0.25
+  reason_rank_weight: 0.10
+
+training:
+  max_length: 8192
+  batch_size: 8
+  accum_steps: 16
+  epochs: 1
+
+  lr: 4.0e-5
+  min_lr: 2.0e-6
+  warmup_ratio: 0.03
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  adam_betas: [0.9, 0.95]
+
+loss:
+  temperature: 4.0
+  alpha_kd: 0.5
+  alpha_align: 0.1
+  beta_ce: 0.5
+
+ 
+logging:
+  checkpoint_dir: ./checkpoints/qwen_reasondistill
+  log_dir: ./logs/qwen_reasondistill
+  loss_log_entries_per_epoch: 1000
+  save_every_n_steps: 100
+ 
