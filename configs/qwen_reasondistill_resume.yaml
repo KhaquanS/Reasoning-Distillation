@@ -1,0 +1,56 @@
+# Train ReasonDistill from the Qwen teacher into the Qwen math student.
+# Resume from the previous final checkpoint to continue training on additional samples.
+
+experiment:
+  name: reasondistill_qwen_continue
+  seed: 42
+
+data:
+  dataset: amdeepseek
+  max_samples: 15_000
+  cache_dir: ./cache
+
+method:
+  name: reasondistill
+  sae_checkpoint: /workspace/Reasoning-Distillation/sae_weights/qwen-3.5-4B-L16_16x-SAE/sae.pt
+  reason_score_path: /workspace/Reasoning-Distillation/sae_weights/qwen-3.5-4B-L16_16x-SAE/reasonscore.pt
+  reasoning_neuron_count: 512
+
+model:
+  teacher: Qwen/Qwen3.5-4B
+  student: Qwen/Qwen3.5-2B
+  teacher_quantize_8bit: true
+  student_checkpoint: ./checkpoints/qwen_reasondistill/epoch_1   # Load the final checkpoint from previous run
+
+alignment:
+  teacher_align_layer: 16
+  student_align_layer: 14
+  target_norm: 64.0
+  reason_active_threshold: 0.0
+  reason_presence_weight: 0.25
+  reason_rank_weight: 0.10
+
+training:
+  max_length: 2048
+  batch_size: 1
+  accum_steps: 128              
+  epochs: 1                    # Two epochs over the dataset (or keep 1 if max_samples increased accordingly)
+
+  lr: 2.0e-5                   # Lower learning rate to reduce oscillations
+  min_lr: 1.0e-6               # Adjusted to keep ratio ~20
+  warmup_ratio: 0.05           # Gentle warmup to smoothly continue from previous state
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  adam_betas: [0.9, 0.95]
+
+loss:
+  temperature: 4.0
+  alpha_kd: 0.5
+  alpha_align: 0.05            # Reduced to prevent alignment from destabilizing the student
+  beta_ce: 0.9                 # Increased to keep task loss dominant
+
+logging:
+  checkpoint_dir: ./checkpoints/qwen_reasondistill_continue
+  log_dir: ./logs/qwen_reasondistill_continue
+  loss_log_entries_per_epoch: 120
+  save_every_n_steps: 50
