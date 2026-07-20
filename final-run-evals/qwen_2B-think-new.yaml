@@ -51,7 +51,7 @@ generation:
   top_k: 20
   presence_penalty: 1.5
   repetition_penalty: 1.0
-  batch_size: 4
+  batch_size: 16
 
 # Benchmark-specific options
 benchmark_options:
