@@ -1,0 +1,62 @@
+# Evaluation configuration for Qwen models and distillations
+
+models:
+  - name: qwen-reasondistill-new-epoch_1
+    checkpoint: Khaquan/qwen-khaquanS-distillations
+    subfolder: qwen_reasondistill_new/epoch_1
+    trust_remote_code: true
+    dtype: bfloat16
+    device_map: auto
+    enable_thinking: false
+    model_type: qwen
+
+  - name: qwen-reasondistill-new-step_300
+    checkpoint: Khaquan/qwen-khaquanS-distillations
+    subfolder: qwen_reasondistill_new/step_300
+    trust_remote_code: true
+    dtype: bfloat16
+    device_map: auto
+    enable_thinking: false
+    model_type: qwen
+
+  - name: qwen-reasondistill-new-step_300
+    checkpoint: Khaquan/qwen-khaquanS-distillations
+    subfolder: qwen_reasondistill_new/step_200
+    trust_remote_code: true
+    dtype: bfloat16
+    device_map: auto
+    enable_thinking: false
+    model_type: qwen
+
+benchmarks:
+  - gsm8k
+  - mmlu
+  - arc-c
+  - hellaswag
+
+output_dir: ./eval_outputs
+cache_dir: ./cache
+split: test
+max_samples: 1000
+seed: 42
+
+# Generation parameters following Qwen best practices
+generation:
+  max_new_tokens: 2048
+  temperature: 1.0
+  top_p: 0.95
+  top_k: 20
+  presence_penalty: 1.5
+  repetition_penalty: 1.0
+  batch_size: 4
+
+# Benchmark-specific options
+benchmark_options:
+  mmlu:
+    subject: all
+    max_new_tokens: 4096
+  arc-c:
+    max_new_tokens: 1024
+  hellaswag:
+    max_new_tokens: 1024
+    split: validation
