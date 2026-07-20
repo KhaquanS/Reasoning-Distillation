@@ -21,7 +21,7 @@ class ModelSpec:
     name: str
     checkpoint: str
     tokenizer: Optional[str] = None
-    subfolder: Optional[str] = None          # subfolder inside repo
+    subfolder: Optional[str] = None
     trust_remote_code: bool = True
     dtype: str = "auto"
     device_map: str = "auto"
@@ -29,7 +29,8 @@ class ModelSpec:
     load_in_4bit: bool = False
     use_flash_attention_2: bool = False
     enable_thinking: bool = True
-    model_type: str = "qwen"                # NEW: 'qwen', 'llama', 'mistral', etc.
+    model_type: str = "qwen"
+    strip_language_model_prefix: bool = False   # <-- NEW: remap keys from model.language_model.* to model.*
 
 
 @dataclass
@@ -81,15 +82,10 @@ def load_config(path: str | Path) -> EvalConfig:
         # Determine default thinking mode based on model size if not explicitly set
         enable_thinking = item.get("enable_thinking")
         if enable_thinking is None:
-            # If checkpoint contains "4b" or "4B" we default to True (thinking), else False
             enable_thinking = "4b" in str(checkpoint).lower() or "4B" in str(checkpoint).lower()
 
         # Parse model_type, default to "qwen" for backward compatibility
         model_type = item.get("model_type", "qwen")
-        # Allow any string, but we'll treat unknown as "default"
-        if model_type not in ("qwen", "llama", "mistral", "default"):
-            # Warn but keep it; we'll use it as-is
-            pass
 
         models.append(
             ModelSpec(
@@ -105,6 +101,7 @@ def load_config(path: str | Path) -> EvalConfig:
                 use_flash_attention_2=bool(item.get("use_flash_attention_2", False)),
                 enable_thinking=enable_thinking,
                 model_type=model_type,
+                strip_language_model_prefix=bool(item.get("strip_language_model_prefix", False)),
             )
         )
 

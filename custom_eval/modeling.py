@@ -63,20 +63,18 @@ def load_model_and_tokenizer(
         is_local = False
 
     # ----- TOKENIZER LOADING -----
-    # If a separate tokenizer is specified, use it without subfolder.
-    # Otherwise, use the checkpoint path (with subfolder if provided).
     if spec.tokenizer is not None:
         tokenizer_ref = spec.tokenizer
-        use_subfolder = False   # do not apply subfolder to tokenizer
+        use_subfolder = False
     else:
         tokenizer_ref = model_ref
-        use_subfolder = True    # apply subfolder to tokenizer if present
+        use_subfolder = True
 
     tokenizer_kwargs = {
         "cache_dir": cache_dir,
         "trust_remote_code": spec.trust_remote_code,
-        "padding_side": "left",          # required for batched generation
-        "use_fast": True,                # prefer fast tokenizer
+        "padding_side": "left",
+        "use_fast": True,
     }
     if use_subfolder and spec.subfolder:
         tokenizer_kwargs["subfolder"] = spec.subfolder
@@ -84,18 +82,15 @@ def load_model_and_tokenizer(
     if is_local:
         tokenizer_kwargs["local_files_only"] = True
 
-    # Load tokenizer with retry fallback
     try:
         tokenizer = AutoTokenizer.from_pretrained(tokenizer_ref, **tokenizer_kwargs)
     except Exception as e:
         if is_local:
-            # If local loading fails, try without local_files_only (might be a repo)
             tokenizer_kwargs.pop("local_files_only", None)
             tokenizer = AutoTokenizer.from_pretrained(tokenizer_ref, **tokenizer_kwargs)
         else:
             raise e
 
-    # Set padding token if missing
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -126,18 +121,13 @@ def load_model_and_tokenizer(
             bnb_4bit_quant_type="nf4",
         )
 
-    # Flash Attention
     if spec.use_flash_attention_2:
         model_kwargs["attn_implementation"] = "flash_attention_2"
 
-    # ----- FIX: Handle missing model_type in config -----
-    # Try to load config from the checkpoint, but if it fails or lacks model_type,
-    # fall back to the base Qwen config.
-    base_model_id = "Qwen/Qwen3.5-2B"  # base model for architecture
+    # Handle config
+    base_model_id = "Qwen/Qwen3.5-2B"
     try:
-        # Try loading config from the checkpoint (with subfolder if any)
         config = AutoConfig.from_pretrained(model_ref, **model_kwargs)
-        # If model_type is missing, load base config and copy attributes
         if not hasattr(config, "model_type") or config.model_type is None:
             base_config = AutoConfig.from_pretrained(
                 base_model_id,
@@ -149,7 +139,6 @@ def load_model_and_tokenizer(
                     setattr(base_config, key, value)
             config = base_config
     except Exception as e:
-        # If loading config from checkpoint fails entirely, use base config
         print(f"Warning: Could not load config from {model_ref}, falling back to {base_model_id}. Error: {e}")
         config = AutoConfig.from_pretrained(
             base_model_id,
@@ -157,15 +146,64 @@ def load_model_and_tokenizer(
             trust_remote_code=spec.trust_remote_code,
         )
 
-    # If model_type is specified in the spec and not 'auto', override the config's model_type
     if spec.model_type and spec.model_type != "auto":
         config.model_type = spec.model_type
 
-    # Pass the config to model loading
     model_kwargs["config"] = config
 
-    # Load model
-    model = AutoModelForCausalLM.from_pretrained(model_ref, **model_kwargs)
-    model.eval()
+    # ----- LOAD MODEL (with strict=False to avoid early errors) -----
+    # We load with strict=False so we can later manually correct key mismatches
+    model = AutoModelForCausalLM.from_pretrained(
+        model_ref,
+        **model_kwargs,
+        strict=False,   # allow missing/unexpected keys; we'll fix them below
+    )
 
+    # ----- HANDLE LANGUAGE_MODEL PREFIX STRIPPING -----
+    if spec.strip_language_model_prefix:
+        from huggingface_hub import hf_hub_download
+        import safetensors.torch
+        import torch
+
+        # Determine the weight file (safetensors preferred)
+        try:
+            model_file = hf_hub_download(
+                repo_id=model_ref,
+                filename="model.safetensors",
+                subfolder=spec.subfolder or "",
+                cache_dir=cache_dir,
+                local_files_only=is_local,
+            )
+            state_dict = safetensors.torch.load_file(model_file)
+        except Exception:
+            # Fallback to PyTorch bin
+            model_file = hf_hub_download(
+                repo_id=model_ref,
+                filename="pytorch_model.bin",
+                subfolder=spec.subfolder or "",
+                cache_dir=cache_dir,
+                local_files_only=is_local,
+            )
+            state_dict = torch.load(model_file, map_location="cpu")
+
+        # Remap keys: remove "model.language_model." prefix
+        new_state_dict = {}
+        for key, value in state_dict.items():
+            if key.startswith("model.language_model."):
+                new_key = "model." + key[len("model.language_model."):]
+            else:
+                new_key = key
+            new_state_dict[new_key] = value
+
+        # Load the remapped state dict strictly (this will overwrite any partial load)
+        missing, unexpected = model.load_state_dict(new_state_dict, strict=True)
+        if missing or unexpected:
+            print(f"After remap, missing keys: {missing[:5] if missing else None}...")
+            print(f"After remap, unexpected keys: {unexpected[:5] if unexpected else None}...")
+            # If there are still issues, we raise but you could set strict=False
+            # For safety, we raise only if there are many
+            if len(missing) > 10 or len(unexpected) > 10:
+                raise RuntimeError("Key remapping did not fully resolve mismatches.")
+
+    model.eval()
     return model, tokenizer

@@ -9,6 +9,7 @@ models:
     device_map: auto
     enable_thinking: true
     model_type: qwen
+    strip_language_model_prefix: true
 
   - name: qwen-reasondistill-new-think-step_300
     checkpoint: Khaquan/qwen-khaquanS-distillations
@@ -18,6 +19,7 @@ models:
     device_map: auto
     enable_thinking: true
     model_type: qwen
+    strip_language_model_prefix: true
 
   - name: qwen-reasondistill-new-think-step_300
     checkpoint: Khaquan/qwen-khaquanS-distillations
@@ -27,6 +29,7 @@ models:
     device_map: auto
     enable_thinking: true
     model_type: qwen
+    strip_language_model_prefix: true
 
 benchmarks:
   - gsm8k
