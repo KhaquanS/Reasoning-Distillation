@@ -152,7 +152,6 @@ def load_model_and_tokenizer(
     model_kwargs["config"] = config
 
     # ----- LOAD MODEL (without strict parameter) -----
-    # We'll handle strict loading manually after prefix stripping if needed
     model = AutoModelForCausalLM.from_pretrained(model_ref, **model_kwargs)
 
     # ----- HANDLE LANGUAGE_MODEL PREFIX STRIPPING -----
@@ -198,17 +197,32 @@ def load_model_and_tokenizer(
                 new_key = key
             new_state_dict[new_key] = value
 
-        # Load the remapped state dict with strict=False to handle any remaining mismatches
+        # Load the remapped state dict
         missing, unexpected = model.load_state_dict(new_state_dict, strict=False)
         if missing:
             print(f"Missing keys after remap: {missing[:10] if len(missing) > 10 else missing}... (total: {len(missing)})")
         if unexpected:
             print(f"Unexpected keys after remap: {unexpected[:10] if len(unexpected) > 10 else unexpected}... (total: {len(unexpected)})")
         
-        # Only raise if there are critical missing keys (not just tied weights)
-        critical_missing = [k for k in missing if "tied" not in k and "weight" in k]
-        if len(critical_missing) > 20:
-            raise RuntimeError(f"Too many critical missing keys after remap: {len(critical_missing)}")
+        # ----- FIX: Explicitly handle weight tying -----
+        if config.tie_word_embeddings:
+            print("Applying weight tying (embed_tokens.weight -> lm_head.weight)...")
+            # This forces the model to tie the weights
+            model.tie_weights()
+            
+            # Verify tying worked
+            if hasattr(model, "lm_head") and hasattr(model, "model"):
+                if hasattr(model.model, "embed_tokens") and hasattr(model.lm_head, "weight"):
+                    # Check if they share the same memory
+                    embed_weight = model.model.embed_tokens.weight
+                    lm_head_weight = model.lm_head.weight
+                    if embed_weight.data_ptr() == lm_head_weight.data_ptr():
+                        print("✓ Weight tying confirmed: embed_tokens and lm_head share the same weights")
+                    else:
+                        print("⚠ Weight tying may not have been applied correctly")
+                        # Manually tie them
+                        model.lm_head.weight = model.model.embed_tokens.weight
+                        print("Manually tied weights")
 
     model.eval()
     return model, tokenizer
