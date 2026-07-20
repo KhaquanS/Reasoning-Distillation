@@ -100,6 +100,7 @@ def load_model_and_tokenizer(
         "trust_remote_code": spec.trust_remote_code,
         "torch_dtype": resolve_dtype(spec.dtype),
         "device_map": spec.device_map,
+        "strict": False,   # <-- Moved here so from_pretrained consumes it
     }
     if spec.subfolder:
         model_kwargs["subfolder"] = spec.subfolder
@@ -151,19 +152,13 @@ def load_model_and_tokenizer(
 
     model_kwargs["config"] = config
 
-    # ----- LOAD MODEL (with strict=False to avoid early errors) -----
-    # We load with strict=False so we can later manually correct key mismatches
-    model = AutoModelForCausalLM.from_pretrained(
-        model_ref,
-        **model_kwargs,
-        strict=False,   # allow missing/unexpected keys; we'll fix them below
-    )
+    # ----- LOAD MODEL -----
+    model = AutoModelForCausalLM.from_pretrained(model_ref, **model_kwargs)
 
     # ----- HANDLE LANGUAGE_MODEL PREFIX STRIPPING -----
     if spec.strip_language_model_prefix:
         from huggingface_hub import hf_hub_download
         import safetensors.torch
-        import torch
 
         # Determine the weight file (safetensors preferred)
         try:
@@ -195,13 +190,12 @@ def load_model_and_tokenizer(
                 new_key = key
             new_state_dict[new_key] = value
 
-        # Load the remapped state dict strictly (this will overwrite any partial load)
+        # Load the remapped state dict strictly (this will overwrite the partial load)
         missing, unexpected = model.load_state_dict(new_state_dict, strict=True)
         if missing or unexpected:
             print(f"After remap, missing keys: {missing[:5] if missing else None}...")
             print(f"After remap, unexpected keys: {unexpected[:5] if unexpected else None}...")
-            # If there are still issues, we raise but you could set strict=False
-            # For safety, we raise only if there are many
+            # If there are still many issues, raise an error
             if len(missing) > 10 or len(unexpected) > 10:
                 raise RuntimeError("Key remapping did not fully resolve mismatches.")
 
