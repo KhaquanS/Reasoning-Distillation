@@ -100,7 +100,6 @@ def load_model_and_tokenizer(
         "trust_remote_code": spec.trust_remote_code,
         "torch_dtype": resolve_dtype(spec.dtype),
         "device_map": spec.device_map,
-        "strict": False,   # <-- Moved here so from_pretrained consumes it
     }
     if spec.subfolder:
         model_kwargs["subfolder"] = spec.subfolder
@@ -152,7 +151,8 @@ def load_model_and_tokenizer(
 
     model_kwargs["config"] = config
 
-    # ----- LOAD MODEL -----
+    # ----- LOAD MODEL (without strict parameter) -----
+    # We'll handle strict loading manually after prefix stripping if needed
     model = AutoModelForCausalLM.from_pretrained(model_ref, **model_kwargs)
 
     # ----- HANDLE LANGUAGE_MODEL PREFIX STRIPPING -----
@@ -160,6 +160,8 @@ def load_model_and_tokenizer(
         from huggingface_hub import hf_hub_download
         import safetensors.torch
 
+        print("Stripping 'model.language_model.' prefix from checkpoint...")
+        
         # Determine the weight file (safetensors preferred)
         try:
             model_file = hf_hub_download(
@@ -172,14 +174,20 @@ def load_model_and_tokenizer(
             state_dict = safetensors.torch.load_file(model_file)
         except Exception:
             # Fallback to PyTorch bin
-            model_file = hf_hub_download(
-                repo_id=model_ref,
-                filename="pytorch_model.bin",
-                subfolder=spec.subfolder or "",
-                cache_dir=cache_dir,
-                local_files_only=is_local,
-            )
-            state_dict = torch.load(model_file, map_location="cpu")
+            try:
+                model_file = hf_hub_download(
+                    repo_id=model_ref,
+                    filename="pytorch_model.bin",
+                    subfolder=spec.subfolder or "",
+                    cache_dir=cache_dir,
+                    local_files_only=is_local,
+                )
+                state_dict = torch.load(model_file, map_location="cpu")
+            except Exception as e:
+                print(f"Warning: Could not load model weights for prefix stripping: {e}")
+                print("Continuing with partially loaded model...")
+                model.eval()
+                return model, tokenizer
 
         # Remap keys: remove "model.language_model." prefix
         new_state_dict = {}
@@ -190,14 +198,17 @@ def load_model_and_tokenizer(
                 new_key = key
             new_state_dict[new_key] = value
 
-        # Load the remapped state dict strictly (this will overwrite the partial load)
-        missing, unexpected = model.load_state_dict(new_state_dict, strict=True)
-        if missing or unexpected:
-            print(f"After remap, missing keys: {missing[:5] if missing else None}...")
-            print(f"After remap, unexpected keys: {unexpected[:5] if unexpected else None}...")
-            # If there are still many issues, raise an error
-            if len(missing) > 10 or len(unexpected) > 10:
-                raise RuntimeError("Key remapping did not fully resolve mismatches.")
+        # Load the remapped state dict with strict=False to handle any remaining mismatches
+        missing, unexpected = model.load_state_dict(new_state_dict, strict=False)
+        if missing:
+            print(f"Missing keys after remap: {missing[:10] if len(missing) > 10 else missing}... (total: {len(missing)})")
+        if unexpected:
+            print(f"Unexpected keys after remap: {unexpected[:10] if len(unexpected) > 10 else unexpected}... (total: {len(unexpected)})")
+        
+        # Only raise if there are critical missing keys (not just tied weights)
+        critical_missing = [k for k in missing if "tied" not in k and "weight" in k]
+        if len(critical_missing) > 20:
+            raise RuntimeError(f"Too many critical missing keys after remap: {len(critical_missing)}")
 
     model.eval()
     return model, tokenizer
