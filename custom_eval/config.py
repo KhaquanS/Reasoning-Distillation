@@ -21,7 +21,7 @@ class ModelSpec:
     name: str
     checkpoint: str
     tokenizer: Optional[str] = None
-    subfolder: Optional[str] = None          # <-- NEW: subfolder inside repo
+    subfolder: Optional[str] = None          # subfolder inside repo
     trust_remote_code: bool = True
     dtype: str = "auto"
     device_map: str = "auto"
@@ -29,6 +29,7 @@ class ModelSpec:
     load_in_4bit: bool = False
     use_flash_attention_2: bool = False
     enable_thinking: bool = True
+    model_type: str = "qwen"                # NEW: 'qwen', 'llama', 'mistral', etc.
 
 
 @dataclass
@@ -83,12 +84,19 @@ def load_config(path: str | Path) -> EvalConfig:
             # If checkpoint contains "4b" or "4B" we default to True (thinking), else False
             enable_thinking = "4b" in str(checkpoint).lower() or "4B" in str(checkpoint).lower()
 
+        # Parse model_type, default to "qwen" for backward compatibility
+        model_type = item.get("model_type", "qwen")
+        # Allow any string, but we'll treat unknown as "default"
+        if model_type not in ("qwen", "llama", "mistral", "default"):
+            # Warn but keep it; we'll use it as-is
+            pass
+
         models.append(
             ModelSpec(
                 name=model_name,
                 checkpoint=str(checkpoint),
                 tokenizer=item.get("tokenizer"),
-                subfolder=item.get("subfolder"),          # <-- NEW
+                subfolder=item.get("subfolder"),
                 trust_remote_code=bool(item.get("trust_remote_code", True)),
                 dtype=str(item.get("dtype", "auto")),
                 device_map=str(item.get("device_map", "auto")),
@@ -96,6 +104,7 @@ def load_config(path: str | Path) -> EvalConfig:
                 load_in_4bit=bool(item.get("load_in_4bit", False)),
                 use_flash_attention_2=bool(item.get("use_flash_attention_2", False)),
                 enable_thinking=enable_thinking,
+                model_type=model_type,
             )
         )
 

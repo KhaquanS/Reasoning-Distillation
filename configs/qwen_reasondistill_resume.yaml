@@ -36,17 +36,17 @@ training:
   accum_steps: 128              
   epochs: 1                    # Two epochs over the dataset (or keep 1 if max_samples increased accordingly)
 
-  lr: 2.0e-5                   # Lower learning rate to reduce oscillations
-  min_lr: 1.0e-6               # Adjusted to keep ratio ~20
-  warmup_ratio: 0.05           # Gentle warmup to smoothly continue from previous state
+  lr: 1.0e-5                   # Lower learning rate to reduce oscillations
+  min_lr: 1.0e-6               
+  warmup_ratio: 0.1           # Gentle warmup to smoothly continue from previous state
   weight_decay: 0.01
   max_grad_norm: 1.0
   adam_betas: [0.9, 0.95]
 
 loss:
   temperature: 4.0
-  alpha_kd: 0.5
-  alpha_align: 0.05            # Reduced to prevent alignment from destabilizing the student
+  alpha_kd: 0.3
+  alpha_align: 0.02            # Reduced to prevent alignment from destabilizing the student
   beta_ce: 0.9                 # Increased to keep task loss dominant
 
 logging:

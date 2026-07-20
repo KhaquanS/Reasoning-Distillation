@@ -52,6 +52,7 @@ def run_evaluation(config: EvalConfig) -> List[Dict[str, Any]]:
     for model_spec in config.models:
         print(f"\n{'='*60}")
         print(f"Loading model: {model_spec.name} ({model_spec.checkpoint})")
+        print(f"Model type: {model_spec.model_type}")
         print(f"Thinking mode: {'Enabled' if model_spec.enable_thinking else 'Disabled'}")
         print(f"Batch size: {config.batch_size}")
         print(f"Pass@k: {config.pass_at_k}")
@@ -119,15 +120,16 @@ def run_evaluation(config: EvalConfig) -> List[Dict[str, Any]]:
                     tokenizer=tokenizer,
                     questions=questions,
                     benchmark_name=benchmark_name,
+                    model_type=model_spec.model_type,          # <-- PASS model_type
                     enable_thinking=model_spec.enable_thinking,
-                    max_new_tokens=effective_max_tokens,          # per-benchmark
+                    max_new_tokens=effective_max_tokens,
                     temperature=effective_temp,
                     top_p=effective_top_p,
                     top_k=effective_top_k,
                     repetition_penalty=effective_repetition_penalty,
                     pass_at_k=config.pass_at_k,
                     system_prompt=None,
-                    max_input_length=4096, 
+                    max_input_length=4096,
                     show_progress=True,
                 )
 
@@ -166,7 +168,8 @@ def run_evaluation(config: EvalConfig) -> List[Dict[str, Any]]:
                 "correct": correct_count,
                 "pass_at_k": config.pass_at_k,
                 "enable_thinking": model_spec.enable_thinking,
-                "max_new_tokens": effective_max_tokens,         # log effective value
+                "model_type": model_spec.model_type,
+                "max_new_tokens": effective_max_tokens,
                 "temperature": effective_temp,
                 "top_p": effective_top_p,
                 "top_k": effective_top_k,

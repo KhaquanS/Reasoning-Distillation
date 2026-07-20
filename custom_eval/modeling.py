@@ -137,15 +137,13 @@ def load_model_and_tokenizer(
     try:
         # Try loading config from the checkpoint (with subfolder if any)
         config = AutoConfig.from_pretrained(model_ref, **model_kwargs)
-        # Check if model_type is present; if not, set it
+        # If model_type is missing, load base config and copy attributes
         if not hasattr(config, "model_type") or config.model_type is None:
-            # Load base config and copy over the attributes we need
             base_config = AutoConfig.from_pretrained(
                 base_model_id,
                 cache_dir=cache_dir,
                 trust_remote_code=spec.trust_remote_code,
             )
-            # Override with our checkpoint's config but keep the model_type
             for key, value in config.to_dict().items():
                 if key != "model_type":
                     setattr(base_config, key, value)
@@ -158,6 +156,10 @@ def load_model_and_tokenizer(
             cache_dir=cache_dir,
             trust_remote_code=spec.trust_remote_code,
         )
+
+    # If model_type is specified in the spec and not 'auto', override the config's model_type
+    if spec.model_type and spec.model_type != "auto":
+        config.model_type = spec.model_type
 
     # Pass the config to model loading
     model_kwargs["config"] = config

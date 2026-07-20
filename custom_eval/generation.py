@@ -52,14 +52,16 @@ def extract_final_response(
     text: str,
     benchmark_name: str = "default",
     enable_thinking: bool = False,
+    model_type: str = "qwen",
 ) -> str:
     """
-    Extract the final answer from model output based on benchmark type.
+    Extract the final answer from model output based on benchmark type and model_type.
     """
     if not text:
         return ""
 
-    if enable_thinking:
+    # Remove thinking block only for Qwen models with thinking enabled
+    if model_type == "qwen" and enable_thinking:
         text = QwenChatFormatter.extract_response(text)
 
     text = text.strip()
@@ -120,23 +122,39 @@ class TokenProgressCallback(StoppingCriteria):
 # Core generation functions
 # ----------------------------------------------------------------------------
 
+def build_messages(
+    prompt: str,
+    system_prompt: Optional[str],
+    model_type: str,
+    enable_thinking: bool,
+) -> List[dict]:
+    """
+    Build a message list suitable for the tokenizer's chat template.
+    For Qwen, use the QwenChatFormatter; for others, build a simple system/user pair.
+    """
+    if model_type == "qwen":
+        return QwenChatFormatter.format_messages(prompt, system_prompt, enable_thinking)
+    else:
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        return messages
+
+
 def _format_prompt(
     question: str,
     benchmark_name: str,
     tokenizer: PreTrainedTokenizer,
+    model_type: str,
     enable_thinking: bool,
     system_prompt: Optional[str] = None,
 ) -> str:
     """Build and apply the chat template to a single question."""
     from custom_eval.prompts.templates import build_prompt
-    from custom_eval.prompts.qwen_formatter import QwenChatFormatter
 
     prompt = build_prompt(question, benchmark_name)
-    messages = QwenChatFormatter.format_messages(
-        prompt=prompt,
-        system_prompt=system_prompt,
-        enable_thinking=enable_thinking,
-    )
+    messages = build_messages(prompt, system_prompt, model_type, enable_thinking)
     return tokenizer.apply_chat_template(
         messages,
         tokenize=False,
@@ -149,6 +167,7 @@ def generate_candidates_batch(
     tokenizer: PreTrainedTokenizer,
     questions: List[str],
     benchmark_name: str,
+    model_type: str = "qwen",
     enable_thinking: bool = True,
     max_new_tokens: int = 32768,
     temperature: float = 1.0,
@@ -171,7 +190,7 @@ def generate_candidates_batch(
 
     # Format each question into a prompt
     prompts = [
-        _format_prompt(q, benchmark_name, tokenizer, enable_thinking, system_prompt)
+        _format_prompt(q, benchmark_name, tokenizer, model_type, enable_thinking, system_prompt)
         for q in questions
     ]
 
@@ -245,9 +264,10 @@ def generate_candidates_batch(
             raw,
             benchmark_name=benchmark_name,
             enable_thinking=enable_thinking,
+            model_type=model_type,
         )
         thinking_content = None
-        if enable_thinking:
+        if model_type == "qwen" and enable_thinking:
             think_pattern = re.compile(r"<think\s*>\s*(.*?)\s*</think\s*>", re.IGNORECASE | re.DOTALL)
             match = think_pattern.search(raw)
             if match:
@@ -276,6 +296,7 @@ def generate_candidates(
     tokenizer: PreTrainedTokenizer,
     question: str,
     benchmark_name: str,
+    model_type: str = "qwen",
     enable_thinking: bool = True,
     max_new_tokens: int = 32768,
     temperature: float = 1.0,
@@ -295,6 +316,7 @@ def generate_candidates(
         tokenizer=tokenizer,
         questions=[question],
         benchmark_name=benchmark_name,
+        model_type=model_type,
         enable_thinking=enable_thinking,
         max_new_tokens=max_new_tokens,
         temperature=temperature,
