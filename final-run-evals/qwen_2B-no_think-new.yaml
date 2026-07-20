@@ -45,7 +45,7 @@ seed: 42
 
 # Generation parameters following Qwen best practices
 generation:
-  max_new_tokens: 2048
+  max_new_tokens: 4096
   temperature: 1.0
   top_p: 0.95
   top_k: 20
