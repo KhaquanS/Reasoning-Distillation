@@ -21,9 +21,9 @@ models:
     model_type: qwen
     strip_language_model_prefix: true
 
-  - name: qwen-reasondistill-new-step_300
+  - name: qwen-reasondistill-continue-epoch_1
     checkpoint: Khaquan/qwen-khaquanS-distillations
-    subfolder: qwen_reasondistill_new/step_200
+    subfolder: qwen_reasondistill_continue/epoch_1
     trust_remote_code: true
     dtype: bfloat16
     device_map: auto

@@ -11,6 +11,13 @@ models:
     model_type: qwen
     strip_language_model_prefix: true
 
+  - name: qwen-3.5-2b-think
+    checkpoint: Qwen/Qwen3.5-2B
+    trust_remote_code: true
+    dtype: bfloat16
+    device_map: auto
+    enable_thinking: true
+
   - name: qwen-reasondistill-new-think-step_300
     checkpoint: Khaquan/qwen-khaquanS-distillations
     subfolder: qwen_reasondistill_new/step_300
@@ -21,15 +28,6 @@ models:
     model_type: qwen
     strip_language_model_prefix: true
 
-  - name: qwen-reasondistill-new-think-step_300
-    checkpoint: Khaquan/qwen-khaquanS-distillations
-    subfolder: qwen_reasondistill_new/step_200
-    trust_remote_code: true
-    dtype: bfloat16
-    device_map: auto
-    enable_thinking: true
-    model_type: qwen
-    strip_language_model_prefix: true
 
 benchmarks:
   - gsm8k
