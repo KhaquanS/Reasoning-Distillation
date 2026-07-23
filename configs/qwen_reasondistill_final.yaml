@@ -9,7 +9,7 @@
 # Run:
 #   python scripts/train.py --config configs/qwen_reasondistill_final.yaml
 
-# There will be a total of 36,000/128 ~ 280 optimizer steps 
+# There will be a total of 40_000/128 ~ 312 optimizer steps 
 
 experiment:
   name: reasondistill_qwen_final
@@ -17,7 +17,7 @@ experiment:
 
 data:
   dataset: amdeepseek
-  max_samples: 36_000
+  max_samples: 40_000
   cache_dir: ./cache
 
 method:
@@ -53,7 +53,7 @@ training:
   adam_betas: [0.9, 0.98]
 
   scheduler_type: cosine_restarts   # Cosine annealing with warm restarts (SGDR) instead of a single OneCycle decay
-  restart_interval_steps: 70       # 4 cycles of LR decay and reset
+  restart_interval_steps: 39       # 8 cycles of LR decay and reset
   restart_mult: 1                    # Keep restart period constant rather than growing it after each restart
 
 loss:
@@ -65,5 +65,5 @@ loss:
 logging:
   checkpoint_dir: ./checkpoints/qwen_reasondistill_final
   log_dir: ./logs/qwen_reasondistill_final
-  loss_log_entries_per_epoch: 140
-  save_every_n_steps: 100
+  loss_log_entries_per_epoch: 50 
+  save_every_n_steps: 150 # 3 total checkpoints saved at 100, 300 and final 
