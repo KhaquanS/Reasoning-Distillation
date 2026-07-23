@@ -42,6 +42,9 @@ OPTIONAL_CONFIG = {
     "reasoning_neuron_count": 196,
     "teacher_quantize_8bit": True,
     "save_every_n_steps": None,
+    "scheduler_type": "onecycle",
+    "restart_interval_steps": None,
+    "restart_mult": 1,
 }
 
 CONFIG_SECTIONS = {
@@ -73,6 +76,9 @@ CONFIG_SECTIONS = {
         "weight_decay",
         "max_grad_norm",
         "adam_betas",
+        "scheduler_type",
+        "restart_interval_steps",
+        "restart_mult",
     ],
     "loss": ["temperature", "alpha_kd", "alpha_align", "beta_ce"],
     "logging": ["checkpoint_dir", "log_dir", "loss_log_entries_per_epoch", "save_every_n_steps"],
@@ -145,6 +151,14 @@ def _load_yaml_config(config_path):
             )
     if len(config["adam_betas"]) != 2:
         raise ValueError("training.adam_betas must contain exactly two values")
+    if config["scheduler_type"] not in ("onecycle", "cosine_restarts"):
+        raise ValueError(
+            f"Unknown training.scheduler_type '{config['scheduler_type']}'. "
+            "Expected 'onecycle' or 'cosine_restarts'"
+        )
+    if config["scheduler_type"] == "cosine_restarts" and config["restart_interval_steps"] is not None:
+        if int(config["restart_interval_steps"]) <= 0:
+            raise ValueError("training.restart_interval_steps must be a positive integer if set")
     if config["save_every_n_steps"] is not None and int(config["save_every_n_steps"]) <= 0:
         raise ValueError("logging.save_every_n_steps must be a positive integer if set")
 
@@ -230,6 +244,9 @@ def main():
     config.weight_decay = args.weight_decay
     config.max_grad_norm = args.max_grad_norm
     config.adam_betas = tuple(args.adam_betas)
+    config.scheduler_type = args.scheduler_type
+    config.restart_interval_steps = args.restart_interval_steps
+    config.restart_mult = args.restart_mult
     config.temperature = args.temperature
     config.alpha_kd = args.alpha_kd
     config.alpha_align = args.alpha_align

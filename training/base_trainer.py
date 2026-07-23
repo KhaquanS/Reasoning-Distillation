@@ -136,14 +136,54 @@ class BaseTrainer:
         if (steps_per_epoch * self.config.epochs) % self.config.accum_steps != 0:
             total_opt_steps += 1
 
-        self.scheduler = torch.optim.lr_scheduler.OneCycleLR(
-            self.optimizer,
-            max_lr=self.config.lr,
-            total_steps=total_opt_steps,
-            pct_start=self.config.warmup_ratio,
-            anneal_strategy="cos",
-            final_div_factor=self.config.lr / self.config.min_lr
-        )
+        # Total optimizer steps for this run. Tracked separately from the
+        # scheduler object itself since not every scheduler type exposes a
+        # `.total_steps` attribute (OneCycleLR does, CosineAnnealingWarmRestarts
+        # does not).
+        self.total_opt_steps = total_opt_steps
+
+        scheduler_type = getattr(self.config, "scheduler_type", "onecycle")
+
+        if scheduler_type == "cosine_restarts":
+            # Warm up linearly for `warmup_ratio` of the run, then hand off to
+            # cosine annealing with warm restarts (SGDR). Each restart pops the
+            # LR back up to `config.lr` and anneals it down to `config.min_lr`,
+            # which lets the optimizer escape shallow minima instead of grinding
+            # to a halt once the LR decays close to zero.
+            warmup_steps = max(1, round(total_opt_steps * self.config.warmup_ratio))
+            restart_interval = getattr(self.config, "restart_interval_steps", None)
+            if not restart_interval:
+                # Default to a single restart halfway through the (post-warmup)
+                # run if the user didn't specify an explicit interval.
+                restart_interval = max(1, (total_opt_steps - warmup_steps) // 2)
+            restart_mult = getattr(self.config, "restart_mult", 1) or 1
+
+            warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+                self.optimizer,
+                start_factor=self.config.min_lr / self.config.lr,
+                end_factor=1.0,
+                total_iters=warmup_steps
+            )
+            restart_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                self.optimizer,
+                T_0=restart_interval,
+                T_mult=restart_mult,
+                eta_min=self.config.min_lr
+            )
+            self.scheduler = torch.optim.lr_scheduler.SequentialLR(
+                self.optimizer,
+                schedulers=[warmup_scheduler, restart_scheduler],
+                milestones=[warmup_steps]
+            )
+        else:
+            self.scheduler = torch.optim.lr_scheduler.OneCycleLR(
+                self.optimizer,
+                max_lr=self.config.lr,
+                total_steps=total_opt_steps,
+                pct_start=self.config.warmup_ratio,
+                anneal_strategy="cos",
+                final_div_factor=self.config.lr / self.config.min_lr
+            )
 
         self.print_freq = max(1, steps_per_epoch // 10)
         target_log_rows = getattr(self.config, "loss_log_entries_per_epoch", 1000)
@@ -197,7 +237,7 @@ class BaseTrainer:
                 self.global_step += 1
 
                 # Only step scheduler if we haven't exceeded total steps
-                if self.global_step < self.scheduler.total_steps:
+                if self.global_step < self.total_opt_steps:
                     self.scheduler.step()
 
                 self.optimizer.zero_grad()
