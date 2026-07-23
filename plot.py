@@ -29,14 +29,14 @@ NEURIPS_RC = {
     "font.family": "serif",
     "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
     "mathtext.fontset": "stix",
-    "font.size": 10,
-    "axes.labelsize": 11,
-    "axes.titlesize": 11,
-    "legend.fontsize": 9.5,
-    "xtick.labelsize": 9,
-    "ytick.labelsize": 9,
+    "font.size": 8,
+    "axes.labelsize": 9,
+    "axes.titlesize": 9,
+    "legend.fontsize": 7.5,
+    "xtick.labelsize": 7,
+    "ytick.labelsize": 7,
     "axes.linewidth": 0.6,
-    "lines.linewidth": 1.4,
+    "lines.linewidth": 1.2,
     "figure.dpi": 300,
     "savefig.dpi": 300,
     "pdf.fonttype": 42,   # embed as real text, not paths, in the PDF
@@ -53,21 +53,87 @@ def load_run(csv_path):
     return df.sort_values("global_step").reset_index(drop=True)
 
 
+def calculate_lr_schedule(config_path, total_steps):
+    """
+    Manually calculate learning rate for every training step based on config.
+    Returns arrays of step indices and corresponding LR values.
+    """
+    cfg = yaml.safe_load(Path(config_path).read_text())["training"]
+    
+    # Extract parameters
+    accum_steps = cfg["accum_steps"]
+    total_opt_steps = total_steps // accum_steps
+    
+    lr_peak = cfg["lr"]
+    min_lr = cfg["min_lr"]
+    warmup_ratio = cfg.get("warmup_ratio", 0.05)
+    scheduler_type = cfg.get("scheduler_type", "onecycle")
+    
+    warmup_opt_steps = max(1, round(total_opt_steps * warmup_ratio))
+    
+    # Initialize arrays for step-by-step LR values
+    all_steps = np.arange(total_steps)
+    lr_values = np.zeros(total_steps)
+    
+    # Warmup phase: linear increase from 0 to lr_peak
+    warmup_steps = warmup_opt_steps * accum_steps
+    warmup_indices = np.arange(warmup_steps)
+    lr_values[warmup_indices] = lr_peak * (warmup_indices / warmup_steps)
+    
+    if scheduler_type == "cosine_restarts":
+        # Cosine annealing with warm restarts (SGDR)
+        restart_interval_opt = cfg.get("restart_interval_steps", 70)
+        restart_mult = cfg.get("restart_mult", 1)
+        
+        # Start cosine decay after warmup
+        cursor_opt = warmup_opt_steps
+        period_opt = restart_interval_opt
+        
+        while cursor_opt < total_opt_steps:
+            end_opt = min(cursor_opt + period_opt, total_opt_steps)
+            steps_in_cycle = end_opt - cursor_opt
+            steps_in_cycle_total = period_opt
+            
+            # Convert optimizer steps to training steps
+            cursor = cursor_opt * accum_steps
+            end = end_opt * accum_steps
+            steps_in_cycle_train = end - cursor
+            steps_in_cycle_total_train = steps_in_cycle_total * accum_steps
+            
+            # Cosine decay within this cycle
+            cycle_indices = np.arange(cursor, end)
+            progress = np.arange(steps_in_cycle_train) / steps_in_cycle_total_train
+            # Cosine annealing: from lr_peak down to min_lr, then jump back to lr_peak at restart
+            cosine_factor = 0.5 * (1 + np.cos(np.pi * progress))
+            lr_values[cycle_indices] = min_lr + (lr_peak - min_lr) * cosine_factor
+            
+            # Update for next cycle
+            cursor_opt = end_opt
+            period_opt *= restart_mult
+            
+    else:  # onecycle or default cosine decay
+        # Simple cosine decay from lr_peak to min_lr after warmup
+        decay_steps = total_steps - warmup_steps
+        decay_indices = np.arange(warmup_steps, total_steps)
+        progress = np.arange(decay_steps) / decay_steps
+        cosine_factor = 0.5 * (1 + np.cos(np.pi * progress))
+        lr_values[decay_indices] = min_lr + (lr_peak - min_lr) * cosine_factor
+    
+    return all_steps, lr_values
+
+
 def schedule_markers(config_path, data_max_step):
     """
-    Recompute where warmup ends and (if used) where each cosine warm-restart
-    happens, in the same step units as the CSV. Mirrors the logic in
-    training/base_trainer.py so the markers line up with what the scheduler
-    actually did; `data_max_step` (from the CSV itself) stands in for the
-    planned total_opt_steps since that requires reloading the dataset.
+    Recompute where warmup ends and where each cosine warm-restart happens,
+    in the same step units as the CSV.
     """
     cfg = yaml.safe_load(Path(config_path).read_text())["training"]
     accum_steps = cfg["accum_steps"]
-
+    
     total_opt_steps = max(1, data_max_step // accum_steps)
     warmup_opt_steps = max(1, round(total_opt_steps * cfg.get("warmup_ratio", 0.0)))
     markers = {"warmup_end": warmup_opt_steps * accum_steps, "restarts": []}
-
+    
     if cfg.get("scheduler_type", "onecycle") == "cosine_restarts":
         period = cfg.get("restart_interval_steps") or max(1, (total_opt_steps - warmup_opt_steps) // 2)
         restart_mult = cfg.get("restart_mult", 1) or 1
@@ -78,62 +144,76 @@ def schedule_markers(config_path, data_max_step):
                 break
             markers["restarts"].append(cursor * accum_steps)
             period *= restart_mult
-
+    
     return markers
 
 
 def steepest_drop_window(df, window=5):
     """Find the span of `window` consecutive logged rows with the single largest loss drop."""
     loss = df["avg_loss"].to_numpy()
+    
+    # If there are fewer rows than the window, return the full range
+    if len(loss) <= window:
+        return df["global_step"].iloc[0], df["global_step"].iloc[-1]
+    
     drops = loss[:-window] - loss[window:]
     i = int(np.argmax(drops))
     return df["global_step"].iloc[i], df["global_step"].iloc[i + window]
 
 
-def make_plot(df, markers=None, title=None, wide=False):
+def make_plot(df, config_path=None, markers=None, title=None, wide=False):
     plt.rcParams.update(NEURIPS_RC)
-    fig, ax_loss = plt.subplots(figsize=(7.2, 4.4) if wide else (5.2, 4.0))
-
+    
+    # Reduced figure size
+    fig, ax_loss = plt.subplots(figsize=(4.0, 3.0) if wide else (3.5, 2.8))
+    
+    # Plot loss curve (from CSV)
     (loss_line,) = ax_loss.plot(df["global_step"], df["avg_loss"], color="#1a1a2e", zorder=3)
-    ax_loss.set_xlabel("Training step")
-    ax_loss.set_ylabel("Training loss")
+    ax_loss.set_xlabel("Training step", fontsize=8)
+    ax_loss.set_ylabel("Training loss", fontsize=8)
     ax_loss.spines["top"].set_visible(False)
-    ax_loss.grid(axis="y", linestyle="--", linewidth=0.4, alpha=0.35)
-
+    ax_loss.grid(axis="y", linestyle="--", linewidth=0.3, alpha=0.35)
+    
+    # Plot learning rate (manually calculated if config provided, else from CSV)
     ax_lr = ax_loss.twinx()
-    (lr_line,) = ax_lr.plot(df["global_step"], df["lr"], color="#c1440e", linestyle="--",
-                             linewidth=1.2, alpha=0.85, zorder=2)
-    ax_lr.set_ylabel("Learning rate")
+    
+    if config_path:
+        # Manually calculate LR for every step
+        all_steps, lr_values = calculate_lr_schedule(config_path, df["global_step"].max())
+        (lr_line,) = ax_lr.plot(all_steps, lr_values, color="#c1440e", linestyle="-", 
+                                linewidth=0.8, alpha=0.7, zorder=2)
+    else:
+        # Fallback to CSV's lr column (only logs at checkpoint steps)
+        (lr_line,) = ax_lr.plot(df["global_step"], df["lr"], color="#c1440e", linestyle="--", 
+                                linewidth=1.0, alpha=0.85, zorder=2)
+    
+    ax_lr.set_ylabel("Learning rate", fontsize=8)
     ax_lr.set_yscale("log")
     ax_lr.spines["top"].set_visible(False)
-
+    
     # --- highlight interesting regions -----------------------------------
-    # Every legend entry below is built explicitly (never from ax.get_lines())
-    # so that axvline/axvspan helper artists never leak stray auto-generated
-    # labels ("_child3", ...) into the legend.
     legend_handles = [
         Line2D([], [], color="#1a1a2e", label="Loss"),
-        Line2D([], [], color="#c1440e", linestyle="--", label="LR"),
+        Line2D([], [], color="#c1440e", linestyle="-" if config_path else "--", label="LR"),
     ]
-
-    # Steepest loss drop: always available, purely data-driven.
+    
+    # Steepest loss drop
     lo, hi = steepest_drop_window(df)
     ax_loss.axvspan(lo, hi, color="#f6c453", alpha=0.3, zorder=1)
     legend_handles.append(Patch(facecolor="#f6c453", alpha=0.3, label="Steepest loss drop"))
-
-    # Scheduler markers: only if a config was supplied.
+    
+    # Scheduler markers
     if markers is not None:
-        ax_loss.axvline(markers["warmup_end"], color="#555555", linestyle=":", linewidth=1.0)
+        ax_loss.axvline(markers["warmup_end"], color="#555555", linestyle=":", linewidth=0.8)
         for step in markers["restarts"]:
-            ax_loss.axvline(step, color="#555555", linestyle=":", linewidth=1.0)
+            ax_loss.axvline(step, color="#555555", linestyle=":", linewidth=0.8)
         label = "Warmup end / LR restart" if markers["restarts"] else "Warmup end"
         legend_handles.append(Line2D([], [], color="#555555", linestyle=":", label=label))
-
+    
     if title:
-        ax_loss.set_title(title, pad=8)
-
-    # Legend goes below the axes so it never overlaps the curves, regardless
-    # of their shape.
+        ax_loss.set_title(title, pad=6, fontsize=9)
+    
+    # Legend below the axes
     fig.legend(
         handles=legend_handles,
         loc="lower center",
@@ -141,6 +221,7 @@ def make_plot(df, markers=None, title=None, wide=False):
         ncol=2,
         frameon=False,
         borderaxespad=0.0,
+        fontsize=7,
     )
     fig.tight_layout(rect=(0, 0.12, 1, 1))
     return fig
@@ -155,11 +236,11 @@ def main():
     parser.add_argument("--title", default=None, help="Optional figure title")
     parser.add_argument("--wide", action="store_true", help="Double-column width instead of single-column")
     args = parser.parse_args()
-
+    
     df = load_run(args.csv_path)
     markers = schedule_markers(args.config, df["global_step"].max()) if args.config else None
-    fig = make_plot(df, markers=markers, title=args.title, wide=args.wide)
-
+    fig = make_plot(df, config_path=args.config, markers=markers, title=args.title, wide=args.wide)
+    
     if args.save:
         out = Path(args.out) if args.out else Path(args.csv_path).with_suffix("").with_name(
             Path(args.csv_path).stem + "_plot")
