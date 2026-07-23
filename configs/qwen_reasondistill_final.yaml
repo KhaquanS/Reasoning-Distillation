@@ -1,13 +1,15 @@
 # Train ReasonDistill from the Qwen teacher into the Qwen 2B student.
-# Continues from the qwen_reasondistill_resume checkpoint, but replaces the
-# OneCycle (single cosine decay to ~min_lr) schedule with cosine annealing +
-# warm restarts (SGDR). The resume run showed that a manual LR jump
+# Repalces OneCycle (single cosine decay to ~min_lr) schedule with cosine annealing +
+# warm restarts (SGDR). 
+# The resume run showed that a manual LR jump
 # (1e-5 -> 4e-5) knocked the model out of a plateau and produced a sharp
 # 1.00 -> 0.78 loss improvement; that behavior is now built into the
 # schedule itself instead of relying on a manual restart between runs.
 #
 # Run:
 #   python scripts/train.py --config configs/qwen_reasondistill_final.yaml
+
+# There will be a total of 36,000/128 ~ 280 optimizer steps 
 
 experiment:
   name: reasondistill_qwen_final
