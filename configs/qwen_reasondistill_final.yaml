@@ -1,4 +1,4 @@
-# Train ReasonDistill from the Qwen teacher into the Qwen math student.
+# Train ReasonDistill from the Qwen teacher into the Qwen 2B student.
 # Continues from the qwen_reasondistill_resume checkpoint, but replaces the
 # OneCycle (single cosine decay to ~min_lr) schedule with cosine annealing +
 # warm restarts (SGDR). The resume run showed that a manual LR jump
@@ -20,8 +20,8 @@ data:
 
 method:
   name: reasondistill
-  sae_checkpoint: /workspace/Reasoning-Distillation/sae_weights/qwen-3.5-4B-L16_16x-SAE/sae.pt
-  reason_score_path: /workspace/Reasoning-Distillation/sae_weights/qwen-3.5-4B-L16_16x-SAE/reasonscore.pt
+  sae_checkpoint: hf://Khaquan/qwen-khaquanS-distillations/qwen-3.5-4B-L16_16x-SAE/sae.pt
+  reason_score_path: hf://Khaquan/qwen-khaquanS-distillations/qwen-3.5-4B-L16_16x-SAE/reasonscore.pt
   reasoning_neuron_count: 512
 
 model:
