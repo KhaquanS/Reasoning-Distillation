@@ -51,7 +51,7 @@ training:
   adam_betas: [0.9, 0.98]
 
   scheduler_type: cosine_restarts   # Cosine annealing with warm restarts (SGDR) instead of a single OneCycle decay
-  restart_interval_steps: 9000       # Restart every 9k optimizer steps (within the requested 8k-10k range)
+  restart_interval_steps: 70       # 4 cycles of LR decay and reset
   restart_mult: 1                    # Keep restart period constant rather than growing it after each restart
 
 loss:
