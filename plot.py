@@ -1,126 +1,175 @@
-import pandas as pd
+"""
+Plot a training_loss.csv log (written by utils.csv_logger.AveragedCSVLogger)
+as a dual-axis loss / learning-rate figure, styled for a NeurIPS main-paper
+figure.
+
+CSV columns produced by the logger: epoch, step_start, step_end, num_steps,
+avg_loss, lr. `step_end` resets to 0 at the start of every epoch, so this
+script rebuilds a monotonic x-axis across epochs before plotting.
+
+Usage:
+    python plot.py path/to/training_loss.csv
+    python plot.py path/to/training_loss.csv --config configs/qwen_reasondistill_final.yaml
+    python plot.py path/to/training_loss.csv --config run.yaml --save --out figures/loss_lr
+
+The figure is only written to disk when --save is passed; otherwise it is
+just displayed (plt.show()).
+"""
+import argparse
+from pathlib import Path
+
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 import numpy as np
-from matplotlib.patches import Rectangle
+import pandas as pd
+import yaml
 
-# ----------------------------------------------------------------------
-# 1. Load and prepare data
-# ----------------------------------------------------------------------
-normal = pd.read_csv("https://huggingface.co/Khaquan/qwen-khaquanS-distillations/resolve/main/reasondistill_logs/normal_run/training_loss.csv")
-continue_df = pd.read_csv("https://huggingface.co/Khaquan/qwen-khaquanS-distillations/resolve/main/reasondistill_logs/continue_run/training_loss.csv")
-
-# Align step indices: continue run starts after normal run ends
-normal_end_step = normal["step_start"].max()
-continue_shifted = continue_df.copy()
-continue_shifted["step_start"] += normal_end_step
-continue_shifted["step_end"] += normal_end_step
-
-# Combine
-combined = pd.concat([
-    normal.assign(run="Initial"),
-    continue_shifted.assign(run="Continued")
-], ignore_index=True)
-
-# Mark the continuation point
-split_step = normal_end_step
-
-# ----------------------------------------------------------------------
-# 2. Create the plot
-# ----------------------------------------------------------------------
-plt.rcParams.update({
-    "font.size": 11,
-    "axes.titlesize": 13,
-    "axes.labelsize": 12,
-    "xtick.labelsize": 10,
-    "ytick.labelsize": 10,
-    "legend.fontsize": 10,
-    "figure.titlesize": 14,
+NEURIPS_RC = {
+    "font.family": "serif",
+    "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
+    "mathtext.fontset": "stix",
+    "font.size": 10,
+    "axes.labelsize": 11,
+    "axes.titlesize": 11,
+    "legend.fontsize": 9.5,
+    "xtick.labelsize": 9,
+    "ytick.labelsize": 9,
+    "axes.linewidth": 0.6,
+    "lines.linewidth": 1.4,
     "figure.dpi": 300,
-})
+    "savefig.dpi": 300,
+    "pdf.fonttype": 42,   # embed as real text, not paths, in the PDF
+    "ps.fonttype": 42,
+}
 
-fig, ax1 = plt.subplots(figsize=(9, 5.5))
 
-# --- Loss (left axis) ---
-color_loss = "#2c3e50"  # dark slate
-ax1.set_xlabel("Optimization Step")
-ax1.set_ylabel("Training Loss", color=color_loss)
-ax1.tick_params(axis="y", labelcolor=color_loss)
-ax1.grid(True, linestyle="--", alpha=0.3, linewidth=0.7)
+def load_run(csv_path):
+    """Load the CSV and add a monotonic `global_step` that stitches epochs together."""
+    df = pd.read_csv(csv_path)
+    epoch_len = df.groupby("epoch")["step_end"].max().sort_index()
+    offset = epoch_len.cumsum().shift(1, fill_value=0)
+    df["global_step"] = df["step_end"] + df["epoch"].map(offset)
+    return df.sort_values("global_step").reset_index(drop=True)
 
-# Plot loss for both runs
-for run_name, group in combined.groupby("run"):
-    ax1.plot(group["step_start"], group["avg_loss"],
-             label=f"{run_name} Loss",
-             color="#3498db" if run_name == "Initial" else "#e67e22",
-             linewidth=1.8,
-             alpha=0.9)
 
-# --- Learning Rate (right axis, log scale) ---
-ax2 = ax1.twinx()
-color_lr = "#7f8c8d"  # gray
-ax2.set_ylabel("Learning Rate", color=color_lr)
-ax2.tick_params(axis="y", labelcolor=color_lr)
-ax2.set_yscale("log")
+def schedule_markers(config_path, data_max_step):
+    """
+    Recompute where warmup ends and (if used) where each cosine warm-restart
+    happens, in the same step units as the CSV. Mirrors the logic in
+    training/base_trainer.py so the markers line up with what the scheduler
+    actually did; `data_max_step` (from the CSV itself) stands in for the
+    planned total_opt_steps since that requires reloading the dataset.
+    """
+    cfg = yaml.safe_load(Path(config_path).read_text())["training"]
+    accum_steps = cfg["accum_steps"]
 
-for run_name, group in combined.groupby("run"):
-    ax2.plot(group["step_start"], group["lr"],
-             label=f"{run_name} LR",
-             color="#95a5a6" if run_name == "Initial" else "#d35400",
-             linewidth=1.2,
-             linestyle="--",
-             alpha=0.7)
+    total_opt_steps = max(1, data_max_step // accum_steps)
+    warmup_opt_steps = max(1, round(total_opt_steps * cfg.get("warmup_ratio", 0.0)))
+    markers = {"warmup_end": warmup_opt_steps * accum_steps, "restarts": []}
 
-# ----------------------------------------------------------------------
-# 3. Highlight key events
-# ----------------------------------------------------------------------
+    if cfg.get("scheduler_type", "onecycle") == "cosine_restarts":
+        period = cfg.get("restart_interval_steps") or max(1, (total_opt_steps - warmup_opt_steps) // 2)
+        restart_mult = cfg.get("restart_mult", 1) or 1
+        cursor = warmup_opt_steps
+        while True:
+            cursor += period
+            if cursor >= total_opt_steps:
+                break
+            markers["restarts"].append(cursor * accum_steps)
+            period *= restart_mult
 
-# 3a. Warm‑up region (initial run only)
-warmup_end = normal[normal["lr"] == normal["lr"].max()]["step_start"].values[0]
-ax1.axvspan(0, warmup_end, alpha=0.08, color="#2c3e50", label="Warm‑up")
-ax1.annotate("Warm‑up ends", xy=(warmup_end, 1.1),
-             xytext=(warmup_end + 200, 1.5),
-             arrowprops=dict(arrowstyle="->", color="#2c3e50", lw=0.8),
-             fontsize=9, color="#2c3e50")
+    return markers
 
-# 3b. Steepest loss drop (initial run)
-loss_vals = normal["avg_loss"].values
-grad = np.gradient(loss_vals)
-steepest_idx = np.argmin(grad)
-steepest_step = normal.iloc[steepest_idx]["step_start"]
-steepest_loss = loss_vals[steepest_idx]
-ax1.annotate("Fastest drop", xy=(steepest_step, steepest_loss),
-             xytext=(steepest_step + 300, steepest_loss - 0.3),
-             arrowprops=dict(arrowstyle="->", color="#27ae60", lw=0.8),
-             fontsize=9, color="#27ae60")
 
-# 3c. Continuation point (vertical dashed line)
-ax1.axvline(x=split_step, color="#e74c3c", linestyle=":", linewidth=1.5, alpha=0.7)
-ax1.annotate("Continue from\nfinal checkpoint",
-             xy=(split_step, 0.75),
-             xytext=(split_step + 400, 0.65),
-             arrowprops=dict(arrowstyle="->", color="#e74c3c", lw=0.8),
-             fontsize=9, color="#e74c3c",
-             ha="center")
+def steepest_drop_window(df, window=5):
+    """Find the span of `window` consecutive logged rows with the single largest loss drop."""
+    loss = df["avg_loss"].to_numpy()
+    drops = loss[:-window] - loss[window:]
+    i = int(np.argmax(drops))
+    return df["global_step"].iloc[i], df["global_step"].iloc[i + window]
 
-# 3d. Final loss plateau (continued run)
-final_loss = continue_df["avg_loss"].iloc[-1]
-ax1.axhline(y=final_loss, color="#8e44ad", linestyle="-.", linewidth=1.2, alpha=0.6,
-            label=f"Final loss = {final_loss:.3f}")
 
-# ----------------------------------------------------------------------
-# 4. Polish and save
-# ----------------------------------------------------------------------
-# Combine legends from both axes
-lines1, labels1 = ax1.get_legend_handles_labels()
-lines2, labels2 = ax2.get_legend_handles_labels()
-legend = ax1.legend(lines1 + lines2, labels1 + labels2,
-                    loc="upper right", frameon=False, ncol=2)
+def make_plot(df, markers=None, title=None, wide=False):
+    plt.rcParams.update(NEURIPS_RC)
+    fig, ax_loss = plt.subplots(figsize=(7.2, 4.4) if wide else (5.2, 4.0))
 
-# Title and layout
-ax1.set_title("ReasonDistill Training: Loss and Learning Rate", pad=15)
-fig.tight_layout()
+    (loss_line,) = ax_loss.plot(df["global_step"], df["avg_loss"], color="#1a1a2e", zorder=3)
+    ax_loss.set_xlabel("Training step")
+    ax_loss.set_ylabel("Training loss")
+    ax_loss.spines["top"].set_visible(False)
+    ax_loss.grid(axis="y", linestyle="--", linewidth=0.4, alpha=0.35)
 
-# Save
-plt.savefig("distillation_combined_curves.pdf", bbox_inches="tight")
-plt.savefig("distillation_combined_curves.png", bbox_inches="tight")
-print("Plots saved as 'distillation_combined_curves.pdf' and '.png'")
+    ax_lr = ax_loss.twinx()
+    (lr_line,) = ax_lr.plot(df["global_step"], df["lr"], color="#c1440e", linestyle="--",
+                             linewidth=1.2, alpha=0.85, zorder=2)
+    ax_lr.set_ylabel("Learning rate")
+    ax_lr.set_yscale("log")
+    ax_lr.spines["top"].set_visible(False)
+
+    # --- highlight interesting regions -----------------------------------
+    # Every legend entry below is built explicitly (never from ax.get_lines())
+    # so that axvline/axvspan helper artists never leak stray auto-generated
+    # labels ("_child3", ...) into the legend.
+    legend_handles = [
+        Line2D([], [], color="#1a1a2e", label="Loss"),
+        Line2D([], [], color="#c1440e", linestyle="--", label="LR"),
+    ]
+
+    # Steepest loss drop: always available, purely data-driven.
+    lo, hi = steepest_drop_window(df)
+    ax_loss.axvspan(lo, hi, color="#f6c453", alpha=0.3, zorder=1)
+    legend_handles.append(Patch(facecolor="#f6c453", alpha=0.3, label="Steepest loss drop"))
+
+    # Scheduler markers: only if a config was supplied.
+    if markers is not None:
+        ax_loss.axvline(markers["warmup_end"], color="#555555", linestyle=":", linewidth=1.0)
+        for step in markers["restarts"]:
+            ax_loss.axvline(step, color="#555555", linestyle=":", linewidth=1.0)
+        label = "Warmup end / LR restart" if markers["restarts"] else "Warmup end"
+        legend_handles.append(Line2D([], [], color="#555555", linestyle=":", label=label))
+
+    if title:
+        ax_loss.set_title(title, pad=8)
+
+    # Legend goes below the axes so it never overlaps the curves, regardless
+    # of their shape.
+    fig.legend(
+        handles=legend_handles,
+        loc="lower center",
+        bbox_to_anchor=(0.5, -0.02),
+        ncol=2,
+        frameon=False,
+        borderaxespad=0.0,
+    )
+    fig.tight_layout(rect=(0, 0.12, 1, 1))
+    return fig
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("csv_path", help="Path to a training_loss.csv log")
+    parser.add_argument("--config", default=None, help="YAML config used for the run (adds warmup/restart markers)")
+    parser.add_argument("--save", action="store_true", help="Save the figure; otherwise it is only displayed")
+    parser.add_argument("--out", default=None, help="Output path prefix when --save is passed (no extension)")
+    parser.add_argument("--title", default=None, help="Optional figure title")
+    parser.add_argument("--wide", action="store_true", help="Double-column width instead of single-column")
+    args = parser.parse_args()
+
+    df = load_run(args.csv_path)
+    markers = schedule_markers(args.config, df["global_step"].max()) if args.config else None
+    fig = make_plot(df, markers=markers, title=args.title, wide=args.wide)
+
+    if args.save:
+        out = Path(args.out) if args.out else Path(args.csv_path).with_suffix("").with_name(
+            Path(args.csv_path).stem + "_plot")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(out.with_suffix(".pdf"), bbox_inches="tight")
+        fig.savefig(out.with_suffix(".png"), bbox_inches="tight")
+        print(f"Saved {out.with_suffix('.pdf')} and {out.with_suffix('.png')}")
+    else:
+        plt.show()
+
+
+if __name__ == "__main__":
+    main()
