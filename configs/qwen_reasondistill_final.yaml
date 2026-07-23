@@ -1,0 +1,67 @@
+# Train ReasonDistill from the Qwen teacher into the Qwen math student.
+# Continues from the qwen_reasondistill_resume checkpoint, but replaces the
+# OneCycle (single cosine decay to ~min_lr) schedule with cosine annealing +
+# warm restarts (SGDR). The resume run showed that a manual LR jump
+# (1e-5 -> 4e-5) knocked the model out of a plateau and produced a sharp
+# 1.00 -> 0.78 loss improvement; that behavior is now built into the
+# schedule itself instead of relying on a manual restart between runs.
+#
+# Run:
+#   python scripts/train.py --config configs/qwen_reasondistill_final.yaml
+
+experiment:
+  name: reasondistill_qwen_final
+  seed: 42
+
+data:
+  dataset: amdeepseek
+  max_samples: 36_000
+  cache_dir: ./cache
+
+method:
+  name: reasondistill
+  sae_checkpoint: /workspace/Reasoning-Distillation/sae_weights/qwen-3.5-4B-L16_16x-SAE/sae.pt
+  reason_score_path: /workspace/Reasoning-Distillation/sae_weights/qwen-3.5-4B-L16_16x-SAE/reasonscore.pt
+  reasoning_neuron_count: 512
+
+model:
+  teacher: Qwen/Qwen3.5-4B
+  student: Qwen/Qwen3.5-2B
+  teacher_quantize_8bit: true
+
+alignment:
+  teacher_align_layer: 16
+  student_align_layer: 12
+  target_norm: 64.0
+  reason_active_threshold: 0.0
+  reason_presence_weight: 0.25
+  reason_rank_weight: 0.10
+
+training:
+  max_length: 2048
+  batch_size: 1
+  accum_steps: 128             # Back to 128; halving to 64 last run added optimization noise on top of the LR jump
+  epochs: 1
+
+  lr: 2.0e-5                   # Peak LR reached at the top of warmup and at every restart
+  min_lr: 4.0e-6                # Floor the cosine decay here instead of ~1e-6, so the tail doesn't go flat
+  warmup_ratio: 0.05
+  weight_decay: 0.01
+  max_grad_norm: 0.7            # Tighter clipping to offset the higher min_lr / restarts adding more noise late in training
+  adam_betas: [0.9, 0.98]
+
+  scheduler_type: cosine_restarts   # Cosine annealing with warm restarts (SGDR) instead of a single OneCycle decay
+  restart_interval_steps: 9000       # Restart every 9k optimizer steps (within the requested 8k-10k range)
+  restart_mult: 1                    # Keep restart period constant rather than growing it after each restart
+
+loss:
+  temperature: 4.0
+  alpha_kd: 0.3
+  alpha_align: 0.1
+  beta_ce: 0.9
+
+logging:
+  checkpoint_dir: ./checkpoints/qwen_reasondistill_final
+  log_dir: ./logs/qwen_reasondistill_final
+  loss_log_entries_per_epoch: 140
+  save_every_n_steps: 100
