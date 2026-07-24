@@ -1,8 +1,9 @@
+import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from pathlib import Path
 from huggingface_hub import hf_hub_download
-import tempfile
 import shutil
+import os
 
 
 def _resolve_student_checkpoint_path(path, cache_dir=None):
@@ -48,8 +49,8 @@ def _resolve_student_checkpoint_path(path, cache_dir=None):
         "tokenizer_config.json",
         "model.safetensors",
         "aligner.pt",
-        "trainer_state.pt",  # optional
-        "chat_template.jinja",  # optional
+        "trainer_state.pt",
+        "chat_template.jinja",
     ]
     
     # Download each file
@@ -57,9 +58,16 @@ def _resolve_student_checkpoint_path(path, cache_dir=None):
         full_path = f"{subpath}/{filename}"
         target_file = local_dir / filename
         if target_file.exists():
-            continue
+            # Check if file is complete (not 0 bytes)
+            if target_file.stat().st_size > 0:
+                print(f"   ✅ Already cached: {filename}")
+                continue
+            else:
+                print(f"   ⚠️  Found incomplete file: {filename}, re-downloading")
+                target_file.unlink()
             
         try:
+            # Download with retry
             downloaded = hf_hub_download(
                 repo_id=repo_id,
                 filename=full_path,
@@ -73,6 +81,11 @@ def _resolve_student_checkpoint_path(path, cache_dir=None):
         except Exception as e:
             print(f"   ⚠️  Skipped: {filename} (not found)")
             continue
+    
+    # Verify required files exist
+    for req in ["config.json", "model.safetensors"]:
+        if not (local_dir / req).exists():
+            raise FileNotFoundError(f"Required file {req} not found in {local_dir}")
     
     return local_dir
 
@@ -98,6 +111,15 @@ def load_student_checkpoint(checkpoint_path, device, dtype, cache_dir=None):
     # Verify it's a valid model directory
     if not (resolved / "config.json").exists():
         raise ValueError(f"Invalid model directory: {resolved} (missing config.json)")
+    
+    # Check model.safetensors exists
+    safetensors_path = resolved / "model.safetensors"
+    if not safetensors_path.exists():
+        raise FileNotFoundError(f"model.safetensors not found in {resolved}")
+    
+    # Check file size - if 0 bytes, something went wrong
+    if safetensors_path.stat().st_size == 0:
+        raise ValueError(f"model.safetensors is empty (0 bytes) in {resolved}")
     
     # Load the student model
     print(f"Loading student weights from {resolved} ...")
