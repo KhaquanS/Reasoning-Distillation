@@ -41,31 +41,31 @@ alignment:
   student_align_layer: 12
   target_norm: 64.0
   reason_active_threshold: 0.0
-  reason_presence_weight: 0.30     # RAISED: stronger enforcement of reasoning presence
-  reason_rank_weight: 0.15         # RAISED: prioritize top reasoning features more
+  reason_presence_weight: 0.25
+  reason_rank_weight: 0.10
 
 training:
   max_length: 2048
   batch_size: 1
-  accum_steps: 128
+  accum_steps: 128             # Back to 128; halving to 64 last run added optimization noise on top of the LR jump
   epochs: 1
 
-  lr: 3.0e-5                       # RAISED: higher peak for more aggressive exploration over 3 cycles
-  min_lr: 1.5e-5                   # RAISED significantly: keeps LR above 50% of peak throughout
-  warmup_ratio: 0.04               # Slightly shorter warmup (~5 steps) for faster ramp-up
-  weight_decay: 0.015              # RAISED: slightly stronger regularization for longer run
-  max_grad_norm: 1.0               # RAISED: allow larger updates to escape local minima
+  lr: 2.0e-5                   # Peak LR reached at the top of warmup and at every restart
+  min_lr: 1.0e-6                # lower floor LR
+  warmup_ratio: 0.05
+  weight_decay: 0.01
+  max_grad_norm: 0.7            # Tighter clipping to offset the higher min_lr / restarts adding more noise late in training
   adam_betas: [0.9, 0.98]
 
-  scheduler_type: cosine_restarts
-  restart_interval_steps: 39       
-  restart_mult: 1             
+  scheduler_type: cosine_restarts   # Cosine annealing with warm restarts (SGDR) instead of a single OneCycle decay
+  restart_interval_steps: 39       # 8 cycles of LR decay and reset
+  restart_mult: 1                    # Keep restart period constant rather than growing it after each restart
 
 loss:
   temperature: 4.0
-  alpha_kd: 0.35                   # RAISED: stronger KD pull from teacher
-  alpha_align: 0.20                # RAISED significantly: stronger reasoning alignment
-  beta_ce: 0.80                    # LOWERED: reduce task loss dominance
+  alpha_kd: 0.3
+  alpha_align: 0.1
+  beta_ce: 0.9
 
 logging:
   checkpoint_dir: ./checkpoints/qwen_reasondistill_final_continue
