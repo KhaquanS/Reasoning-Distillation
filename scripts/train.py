@@ -189,6 +189,9 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     dtype = torch.bfloat16 if device == "cuda" else torch.float32
 
+    print(f"Using device: {device}, dtype: {dtype}")
+    print(f"Config: method={args.method}, dataset={args.dataset}, samples={args.max_samples}")
+
     # Load tokenizer
     tokenizer = load_tokenizer(args.student, cache_dir=args.cache_dir)
 
@@ -209,7 +212,10 @@ def main():
         ds_b = MetaMathQADataset(split="train", cache_dir=args.cache_dir)
         train_ds = MixtureDataset.create(ds_a, ds_b, args.mix_ratio, seed=args.seed)
 
+    print(f"Dataset size: {len(train_ds)} samples")
+
     # Load models
+    print("Loading teacher model...")
     teacher = load_teacher(
         args.teacher,
         device,
@@ -217,6 +223,7 @@ def main():
         quantize_8bit=args.teacher_quantize_8bit,
         cache_dir=args.cache_dir,
     )
+    print("Loading student model...")
     student = load_student(
         args.student,
         device,
@@ -259,7 +266,11 @@ def main():
     config.max_length = args.max_length
     config.save_every_n_steps = args.save_every_n_steps
 
+    print(f"Training config: LR={config.lr}, min_lr={config.min_lr}, max_grad_norm={config.max_grad_norm}")
+    print(f"Loss weights: alpha_kd={config.alpha_kd}, alpha_align={config.alpha_align}, beta_ce={config.beta_ce}")
+
     # Instantiate the appropriate trainer
+    print(f"Instantiating trainer for method: {args.method}")
     if args.method == "logit_kd":
         trainer = LogitKDTrainer(student, teacher, tokenizer, config)
     elif args.method == "fitnets":
@@ -267,12 +278,15 @@ def main():
     elif args.method == "hard_label":
         trainer = HardLabelTrainer(student, teacher, tokenizer, config)
     elif args.method == "reasondistill":
+        print("Loading SAE...")
         sae = load_sae(args.sae_checkpoint, device, dtype)
+        print("Loading reasoning neurons...")
         reasoning_neurons = load_reasoning_neurons(
             args.reason_score_path,
             args.reasoning_neuron_count,
             device,
         )
+        print(f"Using {reasoning_neurons.numel()} reasoning features")
         aligner = ReasoningFeatureHead(
             student_dim=student.config.hidden_size,
             num_reasoning_features=reasoning_neurons.numel(),
@@ -294,15 +308,20 @@ def main():
             
             # Overwrite the trainer's student with the checkpoint model
             trainer.student = checkpoint_model
+            print("✅ Student model weights loaded from checkpoint.")
             
             # If aligner state exists, load it into the trainer's aligner
             if aligner_state is not None and trainer.aligner is not None:
                 trainer.aligner.load_state_dict(aligner_state)
-                print("✅ Aligner weights applied to trainer.")
+                print("✅ Aligner weights loaded from checkpoint and applied.")
             elif trainer.aligner is not None:
-                print("ℹ️  No aligner.pt found; keeping freshly initialized aligner.")
+                print("ℹ️  No aligner.pt found in checkpoint; keeping freshly initialized aligner.")
+            else:
+                print("ℹ️  Trainer has no aligner; skipping aligner loading.")
             
-            # Rebuild optimizer with the loaded weights
+            # Rebuild optimizer with the loaded weights.
+            # Note: This resets Adam momentum. That's expected when resuming
+            # with a different dataset slice (new samples = new gradient landscape).
             params = list(trainer.student.parameters())
             if trainer.aligner is not None:
                 params += list(trainer.aligner.parameters())
@@ -312,15 +331,21 @@ def main():
                 betas=config.adam_betas,
                 weight_decay=config.weight_decay
             )
-            print("✅ Successfully loaded student checkpoint and rebuilt optimizer.")
+            print("✅ Optimizer rebuilt with loaded weights (momentum reset).")
+            print("⚠️  Note: Optimizer momentum was reset. Initial loss may spike.")
+            print("   This is expected and should recover within ~50 steps.")
             
         except Exception as e:
             print(f"❌ Failed to load checkpoint: {e}")
-            print("⚠️  Starting from scratch.")
+            print("⚠️  Starting from scratch with fresh model weights.")
+            import traceback
+            traceback.print_exc()
     else:
         print("ℹ️  No student_checkpoint specified; starting from scratch.")
 
+    print("Starting training...")
     trainer.train(train_ds)
+    print("Training complete!")
 
 
 if __name__ == "__main__":
