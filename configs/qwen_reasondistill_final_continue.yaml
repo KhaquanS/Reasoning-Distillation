@@ -58,8 +58,8 @@ training:
   adam_betas: [0.9, 0.98]
 
   scheduler_type: cosine_restarts
-  restart_interval_steps: 39       # Initial cycle length
-  restart_mult: 1.5                # Cycles grow: 39→59→88 steps (3 cycles total)
+  restart_interval_steps: 39       
+  restart_mult: 1             
 
 loss:
   temperature: 4.0
