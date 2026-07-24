@@ -1,15 +1,15 @@
 # Continue ReasonDistill training from configs/qwen_reasondistill_final.yaml's
-# final checkpoint, on 10,000 NEW samples (samples[40_000:50_000]).
+# final checkpoint, on 15,000 NEW samples (samples[40_000:55_000]).
 #
-# Key changes to break the ~1.0 loss plateau:
-# 1. Increased min_lr (4e-6 → 1e-5) to prevent LR from decaying too far
-# 2. Higher max_grad_norm (0.7 → 1.0) to allow larger gradient steps
-# 3. Slightly higher LR (2e-5 → 2.5e-5) for more aggressive exploration
-# 4. Increased alpha_align (0.1 → 0.15) to emphasize reasoning alignment
-# 5. Slightly reduced beta_ce (0.9 → 0.85) to let KD/alignment guide more
+# Total opt steps: ceil(15_000 / 128) = 117
+# LR cycles: ~3 full cycles with restart_interval_steps=39
 #
-# Total opt steps: ceil(10_000 / 128) = 79
-# LR cycles: ~2 full cycles (matching original density)
+# Key changes for 15k samples:
+# 1. Higher min_lr (4e-6 → 1.5e-5) to prevent LR decay too far over 3 cycles
+# 2. restart_mult: 1.5 to gradually lengthen cycles (39→59→88)
+# 3. Slightly higher max_grad_norm (0.7 → 1.0)
+# 4. Increased alpha_align (0.1 → 0.2) to push reasoning alignment harder
+# 5. Balanced beta_ce (0.9 → 0.8) to let KD/alignment guide more
 #
 # Run:
 #   python scripts/train.py --config configs/qwen_reasondistill_final_continue.yaml
@@ -20,8 +20,8 @@ experiment:
 
 data:
   dataset: amdeepseek
-  max_samples: 10_000
-  skip_samples: 40_000   # Train on samples[40_000:50_000] -- fresh data, not a repeat
+  max_samples: 15_000
+  skip_samples: 40_000   # Train on samples[40_000:55_000] -- fresh data, not a repeat
   cache_dir: ./cache
 
 method:
@@ -41,8 +41,8 @@ alignment:
   student_align_layer: 12
   target_norm: 64.0
   reason_active_threshold: 0.0
-  reason_presence_weight: 0.25
-  reason_rank_weight: 0.10
+  reason_presence_weight: 0.30     # RAISED: stronger enforcement of reasoning presence
+  reason_rank_weight: 0.15         # RAISED: prioritize top reasoning features more
 
 training:
   max_length: 2048
@@ -50,25 +50,25 @@ training:
   accum_steps: 128
   epochs: 1
 
-  lr: 2.5e-5                        # Slightly higher peak to escape plateau
-  min_lr: 1.0e-5                    # RAISED: prevents LR from decaying too low, keeping optimizer active
-  warmup_ratio: 0.05                # ~4-step warmup for smooth start
-  weight_decay: 0.01
-  max_grad_norm: 1.0                # RAISED: allow larger updates to escape local minima
+  lr: 3.0e-5                       # RAISED: higher peak for more aggressive exploration over 3 cycles
+  min_lr: 1.5e-5                   # RAISED significantly: keeps LR above 50% of peak throughout
+  warmup_ratio: 0.04               # Slightly shorter warmup (~5 steps) for faster ramp-up
+  weight_decay: 0.015              # RAISED: slightly stronger regularization for longer run
+  max_grad_norm: 1.0               # RAISED: allow larger updates to escape local minima
   adam_betas: [0.9, 0.98]
 
   scheduler_type: cosine_restarts
-  restart_interval_steps: 39        # Same density: ~2 cycles over 79 steps
-  restart_mult: 1                   # Keep constant period
+  restart_interval_steps: 39       # Initial cycle length
+  restart_mult: 1.5                # Cycles grow: 39→59→88 steps (3 cycles total)
 
 loss:
   temperature: 4.0
-  alpha_kd: 0.3                     # Unchanged: KD still useful
-  alpha_align: 0.15                 # RAISED: stronger reasoning alignment to break plateau
-  beta_ce: 0.85                     # LOWERED: slightly reduce task loss dominance
+  alpha_kd: 0.35                   # RAISED: stronger KD pull from teacher
+  alpha_align: 0.20                # RAISED significantly: stronger reasoning alignment
+  beta_ce: 0.80                    # LOWERED: reduce task loss dominance
 
 logging:
   checkpoint_dir: ./checkpoints/qwen_reasondistill_final_continue
   log_dir: ./logs/qwen_reasondistill_final_continue
-  loss_log_entries_per_epoch: 50
-  save_every_n_steps: 25            # 3 checkpoints: at steps 25, 50, 79
+  loss_log_entries_per_epoch: 17
+  save_every_n_steps: 50           # ~3 checkpoints: at steps 50, 100, final
