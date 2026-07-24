@@ -27,13 +27,20 @@ class AMDeepSeekDataset(Dataset):
     DATASET_ID = "a-m-team/AM-DeepSeek-R1-Distilled-1.4M"
     CONFIG_NAME = "am_0.9M"
 
-    def __init__(self, split="train", cache_dir=None, max_samples=None):
+    def __init__(self, split="train", cache_dir=None, max_samples=None, skip_samples=0):
         """
         Args:
             split (str): Dataset split to load (default: "train").
             cache_dir (str): Cache directory for the dataset.
             max_samples (int, optional): Maximum number of samples to load.
                 Useful for quick testing or subset selection.
+            skip_samples (int): Number of samples to skip from the start of
+                the (unshuffled) dataset before taking `max_samples`. Use
+                this when resuming training on a fresh slice of data — e.g.
+                after training on the first 40_000 samples, set
+                skip_samples=40_000 to train on the *next* max_samples
+                examples instead of re-selecting samples[0:max_samples],
+                which would silently repeat data the model already saw.
         """
         self.data = load_dataset(
             self.DATASET_ID,
@@ -43,8 +50,12 @@ class AMDeepSeekDataset(Dataset):
             features=self._features(),
         )
 
-        # Optionally limit the number of samples
-        if max_samples is not None and max_samples < len(self.data):
+        # Optionally skip already-seen samples and/or limit how many to load
+        if skip_samples:
+            end = len(self.data) if max_samples is None else skip_samples + max_samples
+            end = min(end, len(self.data))
+            self.data = self.data.select(range(skip_samples, end))
+        elif max_samples is not None and max_samples < len(self.data):
             self.data = self.data.select(range(max_samples))
 
         # Format: extract user instruction + assistant response into a single text field

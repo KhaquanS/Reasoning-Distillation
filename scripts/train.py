@@ -28,6 +28,7 @@ from utils.seed import set_seed
 OPTIONAL_CONFIG = {
     "mix_ratio": None,
     "max_samples": None,
+    "skip_samples": 0,
     "sae_checkpoint": None,
     "reason_score_path": None,
     "student_checkpoint": None,
@@ -49,7 +50,7 @@ OPTIONAL_CONFIG = {
 
 CONFIG_SECTIONS = {
     "experiment": ["seed"],
-    "data": ["dataset", "mix_ratio", "max_samples", "cache_dir"],
+    "data": ["dataset", "mix_ratio", "max_samples", "skip_samples", "cache_dir"],
     "method": ["sae_checkpoint", "reason_score_path", "reasoning_neuron_count"],
     "model": [
         "teacher",
@@ -200,7 +201,8 @@ def main():
         train_ds = AMDeepSeekDataset(
             split="train",
             cache_dir=args.cache_dir,
-            max_samples=args.max_samples
+            max_samples=args.max_samples,
+            skip_samples=args.skip_samples
         )
     else:  # mixture
         ds_a = Math500Dataset(split="train", cache_dir=args.cache_dir)
