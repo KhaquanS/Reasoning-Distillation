@@ -34,7 +34,7 @@ model:
   teacher: Qwen/Qwen3.5-4B
   student: Qwen/Qwen3.5-2B
   teacher_quantize_8bit: true
-  student_checkpoint: Khaquan/qwen-khaquanS-distillations/qwen_reasondistill_final/epoch_1   # Load from HF
+  student_checkpoint: hf://Khaquan/qwen-khaquanS-distillations/qwen_reasondistill_final/epoch_1
 
 alignment:
   teacher_align_layer: 16

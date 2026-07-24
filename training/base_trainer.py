@@ -94,22 +94,25 @@ class BaseTrainer:
         if not ckpt_dir.exists():
             raise FileNotFoundError(f"Checkpoint not found: {ckpt_dir}")
 
+        print(f"Loading student weights from {ckpt_dir} ...")
         student = AutoModelForCausalLM.from_pretrained(
             str(ckpt_dir),
             torch_dtype=self.config.dtype,
             device_map={"": self.config.device}
         )
         self.student.load_state_dict(student.state_dict())
+        print("✅ Student weights loaded.")
 
         if self.aligner is not None:
             aligner_path = ckpt_dir / "aligner.pt"
             if aligner_path.exists():
                 self.aligner.load_state_dict(torch.load(aligner_path, map_location=self.config.device))
+                print("✅ Aligner weights loaded.")
             else:
-                print(f"No aligner.pt found in {ckpt_dir}; initialized a fresh aligner.")
+                print(f"ℹ️  No aligner.pt found in {ckpt_dir}; keeping freshly initialized aligner.")
 
         self.start_epoch = 0
-        print(f"Loaded module weights from checkpoint: {ckpt_dir}")
+        print(f"✅ Module weights successfully loaded from: {ckpt_dir}")
         return self.student, self.aligner
 
     def _compute_loss(self, batch):
