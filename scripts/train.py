@@ -13,8 +13,8 @@ from data_loaders.math500 import Math500Dataset
 from data_loaders.metamathqa import MetaMathQADataset
 from data_loaders.mixture import MixtureDataset
 from data_loaders.amdeepseek import AMDeepSeekDataset
-from models.student_loader import load_teacher, load_student, load_tokenizer
-from models.sae_loader import load_sae, load_reasoning_neurons, _resolve_checkpoint_path  # added _resolve_checkpoint_path
+from models.student_loader import load_teacher, load_student, load_tokenizer, load_student_checkpoint
+from models.sae_loader import load_sae, load_reasoning_neurons
 from models.aligner import ReasoningFeatureHead
 from training import (
     LogitKDTrainer,
@@ -284,27 +284,39 @@ def main():
         raise ValueError(f"Unknown method: {args.method}")
 
     # Optionally initialize module weights from a previous checkpoint.
-    # Now supports HF references (hf://...) via _resolve_checkpoint_path.
+    # Now supports HF references (hf://...) for directories.
     if args.student_checkpoint:
-        print(f"Loading student checkpoint from: {args.student_checkpoint}")
+        print(f"📦 Loading student checkpoint from: {args.student_checkpoint}")
         try:
-            resolved_ckpt = _resolve_checkpoint_path(args.student_checkpoint)
-            print(f"Resolved to local path: {resolved_ckpt}")
-            if resolved_ckpt.exists():
-                trainer.load_module_weights(resolved_ckpt)
-                print("✅ Successfully loaded student and aligner weights from HF.")
-            else:
-                print(f"❌ Resolved path does not exist: {resolved_ckpt}")
+            checkpoint_model, aligner_state = load_student_checkpoint(
+                args.student_checkpoint, device, dtype, cache_dir=args.cache_dir
+            )
+            
+            # Overwrite the trainer's student with the checkpoint model
+            trainer.student = checkpoint_model
+            
+            # If aligner state exists, load it into the trainer's aligner
+            if aligner_state is not None and trainer.aligner is not None:
+                trainer.aligner.load_state_dict(aligner_state)
+                print("✅ Aligner weights applied to trainer.")
+            elif trainer.aligner is not None:
+                print("ℹ️  No aligner.pt found; keeping freshly initialized aligner.")
+            
+            # Rebuild optimizer with the loaded weights
+            params = list(trainer.student.parameters())
+            if trainer.aligner is not None:
+                params += list(trainer.aligner.parameters())
+            trainer.optimizer = torch.optim.AdamW(
+                params,
+                lr=config.lr,
+                betas=config.adam_betas,
+                weight_decay=config.weight_decay
+            )
+            print("✅ Successfully loaded student checkpoint and rebuilt optimizer.")
+            
         except Exception as e:
-            print(f"❌ Failed to resolve checkpoint: {e}")
-            # Fallback: try treating as a local path (if it exists)
-            local_path = Path(args.student_checkpoint)
-            if local_path.exists():
-                print(f"Falling back to local path: {local_path}")
-                trainer.load_module_weights(local_path)
-                print("✅ Successfully loaded student and aligner weights from local path.")
-            else:
-                print("⚠️  No valid checkpoint found; starting from scratch.")
+            print(f"❌ Failed to load checkpoint: {e}")
+            print("⚠️  Starting from scratch.")
     else:
         print("ℹ️  No student_checkpoint specified; starting from scratch.")
 
