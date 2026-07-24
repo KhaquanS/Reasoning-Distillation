@@ -29,7 +29,7 @@ class ReasonDistillTrainer(BaseTrainer):
             presence_weight=config.reason_presence_weight,
             rank_weight=config.reason_rank_weight,
         )
-        self.alignment_loss_fn.aligner = self.aligner
+        self.alignment_loss_fn.aligner = self.aligner  # Store reference
 
     def _compute_loss(self, batch):
         input_ids = batch["input_ids"]
@@ -56,6 +56,7 @@ class ReasonDistillTrainer(BaseTrainer):
         s_logits = s_out.logits
 
         # Alignment loss (selected SAE reasoning features)
+        # The alignment_loss_fn uses self.aligner which we updated
         align_loss = self.alignment_loss_fn(s_hidden, t_hidden, attn_mask.float())
 
         # KD loss

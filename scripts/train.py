@@ -298,7 +298,6 @@ def main():
         raise ValueError(f"Unknown method: {args.method}")
 
     # Optionally initialize module weights from a previous checkpoint.
-    # Now supports HF references (hf://...) for directories.
     if args.student_checkpoint:
         print(f"📦 Loading student checkpoint from: {args.student_checkpoint}")
         try:
@@ -306,22 +305,24 @@ def main():
                 args.student_checkpoint, device, dtype, cache_dir=args.cache_dir
             )
             
-            # Overwrite the trainer's student with the checkpoint model
+            # CRITICAL FIX: Load student weights
             trainer.student = checkpoint_model
             print("✅ Student model weights loaded from checkpoint.")
             
-            # If aligner state exists, load it into the trainer's aligner
+            # CRITICAL FIX: Load aligner weights AND update the alignment loss function
             if aligner_state is not None and trainer.aligner is not None:
+                # Load the aligner weights
                 trainer.aligner.load_state_dict(aligner_state)
-                print("✅ Aligner weights loaded from checkpoint and applied.")
+                print("✅ Aligner weights loaded from checkpoint.")
+                
+                # CRITICAL: Update the alignment_loss_fn's aligner reference
+                if hasattr(trainer, 'alignment_loss_fn') and trainer.alignment_loss_fn is not None:
+                    trainer.alignment_loss_fn.aligner = trainer.aligner
+                    print("✅ Updated alignment_loss_fn with loaded aligner.")
             elif trainer.aligner is not None:
                 print("ℹ️  No aligner.pt found in checkpoint; keeping freshly initialized aligner.")
-            else:
-                print("ℹ️  Trainer has no aligner; skipping aligner loading.")
             
             # Rebuild optimizer with the loaded weights.
-            # Note: This resets Adam momentum. That's expected when resuming
-            # with a different dataset slice (new samples = new gradient landscape).
             params = list(trainer.student.parameters())
             if trainer.aligner is not None:
                 params += list(trainer.aligner.parameters())
@@ -332,8 +333,13 @@ def main():
                 weight_decay=config.weight_decay
             )
             print("✅ Optimizer rebuilt with loaded weights (momentum reset).")
-            print("⚠️  Note: Optimizer momentum was reset. Initial loss may spike.")
-            print("   This is expected and should recover within ~50 steps.")
+            print("⚠️  Note: Optimizer momentum was reset. Initial loss may spike briefly.")
+            print("   This is expected and should recover within ~50-100 steps.")
+            
+            # Log current state
+            if trainer.aligner is not None:
+                print(f"✅ Aligner ready: student_dim={trainer.aligner.norm.normalized_shape}, "
+                      f"output_dim={trainer.aligner.proj.out_features if hasattr(trainer.aligner.proj, 'out_features') else 'unknown'}")
             
         except Exception as e:
             print(f"❌ Failed to load checkpoint: {e}")
