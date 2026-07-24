@@ -1,9 +1,11 @@
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from pathlib import Path
-from huggingface_hub import snapshot_download
+from huggingface_hub import hf_hub_download
+import tempfile
+import shutil
 
 
-def _resolve_student_checkpoint_path(path):
+def _resolve_student_checkpoint_path(path, cache_dir=None):
     """
     Resolve a student checkpoint reference to a local directory path.
     
@@ -11,8 +13,7 @@ def _resolve_student_checkpoint_path(path):
       - Local paths: used as-is.
       - "hf://" references to directories on the Hugging Face Hub.
     
-    Unlike _resolve_checkpoint_path (which handles single files), this uses
-    snapshot_download to fetch entire directories.
+    Downloads ONLY the necessary files from the HF repo subdirectory.
     """
     path = str(path)
     if not path.startswith("hf://"):
@@ -32,13 +33,48 @@ def _resolve_student_checkpoint_path(path):
     if "@" in repo_id:
         repo_id, revision = repo_id.split("@", 1)
     
-    # Download the entire repository
-    local_dir = snapshot_download(
-        repo_id=repo_id,
-        revision=revision,
-        repo_type="model",
-    )
-    return Path(local_dir) / subpath
+    # Create a local directory for this checkpoint
+    if cache_dir:
+        local_dir = Path(cache_dir) / "student_checkpoints" / subpath.replace("/", "_")
+    else:
+        local_dir = Path("/tmp") / "student_checkpoints" / subpath.replace("/", "_")
+    local_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Files we need to download
+    needed_files = [
+        "config.json",
+        "generation_config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "model.safetensors",
+        "aligner.pt",
+        "trainer_state.pt",  # optional
+        "chat_template.jinja",  # optional
+    ]
+    
+    # Download each file
+    for filename in needed_files:
+        full_path = f"{subpath}/{filename}"
+        target_file = local_dir / filename
+        if target_file.exists():
+            continue
+            
+        try:
+            downloaded = hf_hub_download(
+                repo_id=repo_id,
+                filename=full_path,
+                revision=revision,
+                repo_type="model",
+                cache_dir=cache_dir,
+            )
+            # Copy to our local directory
+            shutil.copy2(downloaded, target_file)
+            print(f"   ✅ Downloaded: {filename}")
+        except Exception as e:
+            print(f"   ⚠️  Skipped: {filename} (not found)")
+            continue
+    
+    return local_dir
 
 
 def load_student_checkpoint(checkpoint_path, device, dtype, cache_dir=None):
@@ -47,13 +83,13 @@ def load_student_checkpoint(checkpoint_path, device, dtype, cache_dir=None):
     
     Supports:
       - Local paths: used as-is.
-      - HF Hub directories: downloads using snapshot_download.
+      - HF Hub directories: downloads ONLY the necessary files.
     
     Returns:
         (model, aligner_state_dict): The loaded student model and aligner state dict
     """
     print(f"📦 Resolving checkpoint: {checkpoint_path}")
-    resolved = _resolve_student_checkpoint_path(checkpoint_path)
+    resolved = _resolve_student_checkpoint_path(checkpoint_path, cache_dir=cache_dir)
     print(f"   → Resolved to local path: {resolved}")
     
     if not resolved.exists():
@@ -87,8 +123,6 @@ def load_student_checkpoint(checkpoint_path, device, dtype, cache_dir=None):
 
 
 def load_teacher(model_id, device, dtype, quantize_8bit=False, cache_dir=None):
-    # Default now matches scripts/reason_score.py's --teacher_quantize_8bit
-    # default (False) so the two can't silently drift apart again.
     if quantize_8bit:
         bnb_config = BitsAndBytesConfig(load_in_8bit=True, llm_int8_threshold=6.0)
         model = AutoModelForCausalLM.from_pretrained(
@@ -99,12 +133,6 @@ def load_teacher(model_id, device, dtype, quantize_8bit=False, cache_dir=None):
             cache_dir=cache_dir
         )
     else:
-        # quantization_config=None explicitly overrides any
-        # quantization_config baked into the checkpoint's config.json (some
-        # hub repos, especially large MoE models, ship with weights
-        # pre-quantized). Without this, from_pretrained can silently load
-        # bitsandbytes layers even though you never asked for 8-bit here --
-        # which also means downstream activations may not stay bf16.
         model = AutoModelForCausalLM.from_pretrained(
             model_id,
             torch_dtype=dtype,
