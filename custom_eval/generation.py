@@ -27,9 +27,9 @@ class GeneratedCandidate:
 
 def extract_final_answer_from_boxed(text: str) -> Optional[str]:
     """Extract answer from \boxed{} format."""
-    match = re.search(r"\\boxed\{([^{}]+)\}", text)
-    if match:
-        return match.group(1).strip()
+    matches = re.findall(r"\\boxed\{([^{}]+)\}", text)
+    if matches:
+        return matches[-1].strip()
     return None
 
 
@@ -155,10 +155,12 @@ def _format_prompt(
 
     prompt = build_prompt(question, benchmark_name)
     messages = build_messages(prompt, system_prompt, model_type, enable_thinking)
+    template_kwargs = {"enable_thinking": enable_thinking} if model_type == "qwen" else {}
     return tokenizer.apply_chat_template(
         messages,
         tokenize=False,
         add_generation_prompt=True,
+        **template_kwargs,
     )
 
 
@@ -205,12 +207,12 @@ def generate_candidates_batch(
     input_ids = tokenized["input_ids"].to(model.device)
     attention_mask = tokenized["attention_mask"].to(model.device)
 
-    orig_lengths = attention_mask.sum(dim=1).tolist()
+    # Generated sequences include the entire padded input, not just non-pad tokens.
+    input_width = input_ids.shape[1]
 
     if pass_at_k > 1:
         input_ids = input_ids.repeat_interleave(pass_at_k, dim=0)
         attention_mask = attention_mask.repeat_interleave(pass_at_k, dim=0)
-        orig_lengths = [l for l in orig_lengths for _ in range(pass_at_k)]
 
     # Generation kwargs
     generation_kwargs = {
@@ -249,9 +251,8 @@ def generate_candidates_batch(
 
     # Decode and group candidates
     raw_outputs = []
-    for i, (inp, out) in enumerate(zip(input_ids, output_ids)):
-        input_len = orig_lengths[i]
-        gen_tokens = out[input_len:]
+    for out in output_ids:
+        gen_tokens = out[input_width:]
         raw = tokenizer.decode(gen_tokens, skip_special_tokens=True).strip()
         raw_outputs.append(raw)
 
@@ -268,10 +269,12 @@ def generate_candidates_batch(
         )
         thinking_content = None
         if model_type == "qwen" and enable_thinking:
-            think_pattern = re.compile(r"<think\s*>\s*(.*?)\s*</think\s*>", re.IGNORECASE | re.DOTALL)
-            match = think_pattern.search(raw)
-            if match:
-                thinking_content = match.group(1).strip()
+            # The opening tag may already be part of the input chat template.
+            parts = re.split(r"</think\s*>", raw, maxsplit=1, flags=re.IGNORECASE)
+            if len(parts) == 2:
+                thinking_content = re.sub(
+                    r"^\s*<think\s*>\s*", "", parts[0], flags=re.IGNORECASE
+                ).strip()
 
         candidates_flat.append(
             GeneratedCandidate(

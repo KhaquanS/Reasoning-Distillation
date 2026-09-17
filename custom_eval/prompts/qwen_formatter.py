@@ -101,13 +101,9 @@ class QwenChatFormatter:
         """
         import re
         
-        # Look for thinking tags and extract content after them
-        think_pattern = re.compile(r"<think\s*>\s*(.*?)\s*</think\s*>\s*(.*)", re.IGNORECASE | re.DOTALL)
-        match = think_pattern.search(raw_output)
-        
-        if match:
-            # Return the content after the think tag
-            return match.group(2).strip()
-        
-        # If no think tag, return the whole output
+        # The opening <think> can be in the prompt rather than the completion.
+        parts = re.split(r"</think\s*>", raw_output, maxsplit=1, flags=re.IGNORECASE)
+        if len(parts) == 2:
+            return parts[1].strip()
+
         return raw_output.strip()
