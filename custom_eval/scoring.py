@@ -7,10 +7,7 @@ import re
 from fractions import Fraction
 from typing import Optional
 
-
-# Regular expressions for answer extraction
-BOXED_RE = re.compile(r"\\boxed\{([^{}]+)\}")
-JSON_ANSWER_RE = re.compile(r'\{[^}]*"answer"\s*:\s*"([^"]+)"[^}]*\}', re.IGNORECASE)
+from custom_eval.parsing import JSON_ANSWER_RE, find_choice_letter, last_boxed
 
 
 def normalize_text(text: str) -> str:
@@ -18,9 +15,9 @@ def normalize_text(text: str) -> str:
     text = str(text).strip()
     
     # Remove boxed markers
-    boxed = BOXED_RE.findall(text)
+    boxed = last_boxed(text)
     if boxed:
-        text = boxed[-1]
+        text = boxed
     
     # Remove JSON answer markers
     json_match = JSON_ANSWER_RE.search(text)
@@ -39,19 +36,22 @@ def normalize_text(text: str) -> str:
 
 
 def normalize_choice(text: str) -> str:
-    """Normalize multiple-choice answer."""
-    text = normalize_text(text)
-    
-    # Look for single letter
-    match = re.search(r"\b([a-e])\b", text, re.IGNORECASE)
-    if match:
-        return match.group(1).upper()
-    
-    # Check if it's a single character
-    if text and len(text) == 1 and text.upper() in "ABCDE":
+    """Normalize multiple-choice answer. Only a clearly marked label counts, never a stray letter in prose."""
+    text = str(text).strip()
+    text = last_boxed(text) or text
+    json_match = JSON_ANSWER_RE.search(text)
+    if json_match:
+        text = json_match.group(1).strip()
+
+    letter = find_choice_letter(text)
+    if letter:
+        return letter
+
+    # A lone lowercase label, e.g. "b"
+    if len(text) == 1 and text.upper() in "ABCDE":
         return text.upper()
-    
-    return text.upper()
+
+    return normalize_text(text).upper()
 
 
 def get_numeric_value(text: str) -> Optional[float]:

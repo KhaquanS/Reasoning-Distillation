@@ -4,6 +4,7 @@ Main evaluation runner with batched inference and pass@k support.
 
 import json
 import time
+from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -107,6 +108,7 @@ def run_evaluation(config: EvalConfig) -> List[Dict[str, Any]]:
 
             records = []
             correct_count = 0
+            parse_rules = Counter()
             started = time.time()
 
             batch_size = config.batch_size
@@ -140,12 +142,14 @@ def run_evaluation(config: EvalConfig) -> List[Dict[str, Any]]:
                     for idx, cand in enumerate(candidates):
                         is_correct = benchmark.scorer(cand.final_response, ex.answer)
                         passed = passed or is_correct
+                        parse_rules[cand.parse_rule] += 1
                         candidate_records.append({
                             "index": idx,
                             "prompt": cand.prompt,
                             "raw_output": cand.raw_output,
                             "final_response": cand.final_response,
                             "thinking_content": cand.thinking_content,
+                            "parse_rule": cand.parse_rule,
                             "correct": is_correct,
                         })
                     correct_count += int(passed)
@@ -167,6 +171,7 @@ def run_evaluation(config: EvalConfig) -> List[Dict[str, Any]]:
                 "score": correct_count / total if total else 0.0,
                 "correct": correct_count,
                 "pass_at_k": config.pass_at_k,
+                "parse_rules": dict(parse_rules),
                 "enable_thinking": model_spec.enable_thinking,
                 "model_type": model_spec.model_type,
                 "max_new_tokens": effective_max_tokens,
@@ -185,6 +190,7 @@ def run_evaluation(config: EvalConfig) -> List[Dict[str, Any]]:
 
             print(f"Saved: {output_path}")
             print(f"Score: {summary['score']:.4f} ({summary['correct']}/{total})")
+            print(f"Parse rules: {summary['parse_rules']}")
 
             model_results.append({
                 "summary": summary,

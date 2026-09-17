@@ -43,7 +43,9 @@ seed: 42
 
 # Generation parameters following Qwen best practices
 generation:
-  max_new_tokens: 4096
+  # Thinking really runs now, and an answer only counts once the reasoning is closed
+  # with </think>. Short budgets cut reasoning off (parse_rule: unfinished_thinking).
+  max_new_tokens: 16384
   temperature: 1.0
   top_p: 0.95
   top_k: 20
@@ -55,9 +57,5 @@ generation:
 benchmark_options:
   mmlu:
     subject: all
-    max_new_tokens: 4096
-  arc-c:
-    max_new_tokens: 1024
   hellaswag:
-    max_new_tokens: 1024
     split: validation

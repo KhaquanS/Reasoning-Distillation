@@ -2,7 +2,6 @@
 Generation utilities for Qwen models with proper chat formatting, supporting batching and pass@k.
 """
 
-import re
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -10,6 +9,7 @@ import torch
 from tqdm import tqdm
 from transformers import PreTrainedModel, PreTrainedTokenizer, StoppingCriteria, StoppingCriteriaList
 
+from custom_eval.parsing import THINK_OPEN, extract_answer, strip_thinking
 from custom_eval.prompts.qwen_formatter import QwenChatFormatter
 
 @dataclass
@@ -19,81 +19,7 @@ class GeneratedCandidate:
     raw_output: str
     final_response: str
     thinking_content: Optional[str] = None
-
-
-# ----------------------------------------------------------------------------
-# Answer extraction helpers
-# ----------------------------------------------------------------------------
-
-def extract_final_answer_from_boxed(text: str) -> Optional[str]:
-    """Extract answer from \boxed{} format."""
-    match = re.search(r"\\boxed\{([^{}]+)\}", text)
-    if match:
-        return match.group(1).strip()
-    return None
-
-
-def extract_json_answer(text: str) -> Optional[str]:
-    """Extract answer from JSON format like {"answer": "C"}."""
-    import json
-    try:
-        match = re.search(r'\{[^}]*"answer"\s*:\s*"([^"]+)"[^}]*\}', text, re.IGNORECASE)
-        if match:
-            return match.group(1).strip()
-        data = json.loads(text)
-        if "answer" in data:
-            return str(data["answer"]).strip()
-    except (json.JSONDecodeError, TypeError, AttributeError):
-        pass
-    return None
-
-
-def extract_final_response(
-    text: str,
-    benchmark_name: str = "default",
-    enable_thinking: bool = False,
-    model_type: str = "qwen",
-) -> str:
-    """
-    Extract the final answer from model output based on benchmark type and model_type.
-    """
-    if not text:
-        return ""
-
-    # Remove thinking block only for Qwen models with thinking enabled
-    if model_type == "qwen" and enable_thinking:
-        text = QwenChatFormatter.extract_response(text)
-
-    text = text.strip()
-
-    if benchmark_name in {"math500", "aime25", "gsm8k"}:
-        ans = extract_final_answer_from_boxed(text)
-        if ans:
-            return ans
-
-    if benchmark_name in {"arc-c", "mmlu", "gpqa", "hellaswag"}:
-        ans = extract_json_answer(text)
-        if ans:
-            return ans
-
-    patterns = [
-        r"final\s+answer\s*:\s*(.+)",
-        r"answer\s*:\s*(.+)",
-        r"\\boxed\{([^{}]+)\}",
-        r"therefore\s*,\s*(.+)$",
-        r"so\s*,\s*(.+)$",
-        r"the answer is\s*(.+)",
-        r"^([A-D])$",
-    ]
-    for pat in patterns:
-        match = re.search(pat, text, re.IGNORECASE | re.DOTALL)
-        if match:
-            ans = match.group(1).strip()
-            if ans:
-                return ans
-
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    return lines[-1] if lines else text
+    parse_rule: str = "no_answer"  # which extraction rule produced final_response (see parsing.py)
 
 
 # ----------------------------------------------------------------------------
@@ -155,10 +81,12 @@ def _format_prompt(
 
     prompt = build_prompt(question, benchmark_name)
     messages = build_messages(prompt, system_prompt, model_type, enable_thinking)
+    # enable_thinking is read by Qwen's chat template; other templates ignore it
     return tokenizer.apply_chat_template(
         messages,
         tokenize=False,
         add_generation_prompt=True,
+        enable_thinking=enable_thinking,
     )
 
 
@@ -205,12 +133,9 @@ def generate_candidates_batch(
     input_ids = tokenized["input_ids"].to(model.device)
     attention_mask = tokenized["attention_mask"].to(model.device)
 
-    orig_lengths = attention_mask.sum(dim=1).tolist()
-
     if pass_at_k > 1:
         input_ids = input_ids.repeat_interleave(pass_at_k, dim=0)
         attention_mask = attention_mask.repeat_interleave(pass_at_k, dim=0)
-        orig_lengths = [l for l in orig_lengths for _ in range(pass_at_k)]
 
     # Generation kwargs
     generation_kwargs = {
@@ -247,11 +172,12 @@ def generate_candidates_batch(
     if progress_callback is not None:
         progress_callback.close()  # close the pbar
 
-    # Decode and group candidates
+    # Decode and group candidates. Prompts are left-padded, so every row's
+    # generated tokens start at the padded width, not at its unpadded length.
+    prompt_width = input_ids.shape[1]
     raw_outputs = []
-    for i, (inp, out) in enumerate(zip(input_ids, output_ids)):
-        input_len = orig_lengths[i]
-        gen_tokens = out[input_len:]
+    for out in output_ids:
+        gen_tokens = out[prompt_width:]
         raw = tokenizer.decode(gen_tokens, skip_special_tokens=True).strip()
         raw_outputs.append(raw)
 
@@ -260,18 +186,10 @@ def generate_candidates_batch(
         question_idx = i // pass_at_k
         prompt_used = prompts[question_idx]
 
-        final_response = extract_final_response(
-            raw,
-            benchmark_name=benchmark_name,
-            enable_thinking=enable_thinking,
-            model_type=model_type,
-        )
-        thinking_content = None
-        if model_type == "qwen" and enable_thinking:
-            think_pattern = re.compile(r"<think\s*>\s*(.*?)\s*</think\s*>", re.IGNORECASE | re.DOTALL)
-            match = think_pattern.search(raw)
-            if match:
-                thinking_content = match.group(1).strip()
+        # The template opens <think> in the prompt, so the output only contains </think>
+        thinking_opened = prompt_used.rstrip().endswith(THINK_OPEN)
+        thinking_content, _ = strip_thinking(raw)
+        final_response, parse_rule = extract_answer(raw, benchmark_name, thinking_opened)
 
         candidates_flat.append(
             GeneratedCandidate(
@@ -279,6 +197,7 @@ def generate_candidates_batch(
                 raw_output=raw,
                 final_response=final_response,
                 thinking_content=thinking_content,
+                parse_rule=parse_rule,
             )
         )
 
