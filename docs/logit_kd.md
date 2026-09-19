@@ -70,8 +70,9 @@ Outputs:
 - Final student: `checkpoints/qwen_logit_kd_continue/epoch_1`
 - Loss CSVs: `logs/qwen_logit_kd/training_loss.csv` and
   `logs/qwen_logit_kd_continue/training_loss.csv`
-- Intermediate checkpoints: `step_150` and `step_300` in the initial stage;
-  `step_45` and `step_90` in the continuation.
+- Intermediate checkpoints: `step_200` in the initial stage;
+  `step_60` in the continuation. Checkpoint save intervals are independent of
+  the matched training hyperparameters.
 
 Each checkpoint includes the student and tokenizer in Hugging Face format plus
 `trainer_state.pt`. Use the final checkpoint as a model entry's `checkpoint` in a

@@ -100,7 +100,7 @@ class LogitKDTests(unittest.TestCase):
                     + train.CONFIG_SECTIONS["data"]
                     + ["teacher", "student", "teacher_quantize_8bit", "seed",
                        "temperature", "alpha_kd", "beta_ce",
-                       "loss_log_entries_per_epoch", "save_every_n_steps"]
+                       "loss_log_entries_per_epoch"]
                 )
                 for key in keys:
                     self.assertEqual(getattr(kd, key), getattr(reason, key), key)
