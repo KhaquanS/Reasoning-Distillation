@@ -37,3 +37,31 @@ These artifacts are used during training, not loaded by `custom_eval` for checkp
 - ReasonScore: `hf://Khaquan/qwen-khaquanS-distillations/qwen-3.5-4B-L16_16x-SAE/reasonscore.pt`
 
 The distilled model keeps the existing `strip_language_model_prefix: true` setting. Check model-loading logs for missing/unexpected weights. In the smoke results, verify actual dataset sources (the harness can fall back to embedded examples), clean completion boundaries, different thinking-mode prompts, and sensible extracted answers before a full run.
+
+
+## Average generation length on 500 GSM8K questions
+
+Generate fresh responses from exactly the same first 500 `openai/gsm8k` main/test questions using the two September checkpoints:
+
+```bash
+# Choose one mode for both models:
+python september-eval-scripts/gsm8k_generation_length.py --mode think
+# Or:
+python september-eval-scripts/gsm8k_generation_length.py --mode no_think
+```
+
+Use the working CUDA evaluation environment. Defaults match September: batch size 32, 4,096 new tokens, temperature 1.0, top-p 0.95, top-k 20, and repetition penalty 1.0. This script additionally resets generation seed 42 for each model. Reproducibility still depends on package/kernel versions and batch size. The dataset is loaded once without embedded fallback, and both models receive identical questions in the same order. Each model is released before loading the next.
+
+Generation length counts actual generated token IDs, excluding the padded input, terminal EOS token, and padding after EOS. It includes both reasoning and final-answer tokens, plus any generated internal special tokens. The script also records generation steps including EOS, and checks matching tokenizer vocabularies and formatted prompts before producing the paired comparison.
+
+The 4,096-token budget can censor long outputs. The mean includes these budget-limited responses, and the summary reports their frequency separately. EOS-terminated-only means describe a selected subset and should not replace the main comparison. Increase the cap for both models with `--max-new-tokens 8192` if desired; use `--batch-size 8` to reduce memory demand. A two-item check is available via `--num-samples 2`.
+
+Results go to a new timestamped `eval_outputs/gsm8k-length-MODE-*` directory:
+
+- `summary.json`: each model's mean, median, sample standard deviation, p90/p95, min/max, total token count, EOS count, token-limit rate, and paired mean difference/ratio.
+- `paired_lengths.csv`: one row per shared question with both lengths and their difference.
+- `base.jsonl`, `distilled.jsonl`: raw responses, exact token lengths, prompts, stop reasons, and repetition/closing-tag diagnostics; flushed after each batch.
+- `metadata.json`, `questions.json`: selected questions, dataset fingerprint, package versions, hardware, generation settings, and question hash.
+- `base-summary.json`, `distilled-summary.json`: individual summaries, retained if a later model fails.
+
+Pass `--output-dir PATH` to select a new output directory. Existing directories are rejected to prevent accidental overwrites. No benchmark accuracy is computed by this script.
