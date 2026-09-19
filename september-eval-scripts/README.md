@@ -65,3 +65,17 @@ Results go to a new timestamped `eval_outputs/gsm8k-length-MODE-*` directory:
 - `base-summary.json`, `distilled-summary.json`: individual summaries, retained if a later model fails.
 
 Pass `--output-dir PATH` to select a new output directory. Existing directories are rejected to prevent accidental overwrites. No benchmark accuracy is computed by this script.
+
+
+### Stop after the first completed final-answer format
+
+```bash
+python september-eval-scripts/gsm8k_generation_length.py \
+  --mode think --stop-at-final-answer
+```
+
+This optional flag stops each sequence at the first nonempty `<answer>...</answer>` block or balanced `\boxed{...}` outside a thinking block. In thinking mode it waits for `</think>` first; in either mode it also ignores answers inside any newly emitted `<think>` block. A box inside an open answer block waits for `</answer>`. Empty boxes and the literal `answer` placeholder are ignored. Plain answers without either recognized format still terminate on EOS or the token budget.
+
+The callback returns one stop decision per batch member. Completed members are padded by Transformers while other members continue, and that padding is excluded from measured lengths. Counts include the token completing the answer marker (which may also contain a few trailing characters). The script saves `finish_reason: final_answer`, the stop kind (`answer_tag` or `boxed`), and `num_final_answer_terminated` in its summaries. It does not inject an EOS token.
+
+With this flag, the metric is **tokens until the first recognized completed answer**, not the full natural output length. Apply the same flag to both models and keep these results separate from older unrestricted runs. Format completion does not guarantee correctness or prevent a model from wanting to revise its answer. The existing benchmark runner is unchanged. Custom text checks add some stopping overhead; a batch still runs until its slowest member finishes.

@@ -13,6 +13,7 @@ import gc
 import hashlib
 import json
 import platform
+import re
 import statistics
 import sys
 import time
@@ -21,7 +22,101 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 
-def completion_length(sequence, input_width, eos_token_ids, max_new_tokens):
+def final_answer_boundary(text, thinking):
+    """First nonempty answer block or balanced box outside a thinking block.
+
+    This is a format heuristic, not a correctness judgment. An opening <think>
+    may already be in the prompt; thinking=True accounts for that case.
+    """
+    in_think = thinking
+    answer_start = None
+    for match in re.finditer(r'<(/?)(think|answer)\s*>|\\boxed\s*\{', text, re.IGNORECASE):
+        if match.group(2):
+            closing, tag = match.group(1), match.group(2).lower()
+            if tag == 'think':
+                in_think = not bool(closing)
+                answer_start = None
+            elif not in_think:
+                if not closing:
+                    answer_start = match.end()
+                elif answer_start is not None:
+                    content = text[answer_start:match.start()].strip()
+                    answer_start = None
+                    if content and content.lower() != 'answer':
+                        return match.end(), 'answer_tag'
+            continue
+        if in_think or answer_start is not None:
+            continue
+        depth = 1
+        escaped = False
+        for i in range(match.end(), len(text)):
+            char = text[i]
+            if escaped:
+                escaped = False
+                continue
+            if char == '\\':
+                escaped = True
+            elif char == '{':
+                depth += 1
+            elif char == '}':
+                depth -= 1
+                if depth == 0:
+                    content = text[match.end():i].strip()
+                    if content and content.lower() != 'answer':
+                        return i + 1, 'boxed'
+                    break
+    return None
+
+
+class FinalAnswerStopper:
+    """Per-row stopping callback; never halt other unfinished batch members.
+
+    Full text is decoded only when the newest token can close a tag or box.
+    Parsing completion-only text prevents matches against prompt examples.
+    Store actual stop lengths because HF pads stopped rows until the batch ends.
+    """
+
+    def __init__(self, tokenizer, input_width, batch_size, thinking, eos_token_ids):
+        self.tokenizer = tokenizer
+        self.input_width = input_width
+        self.thinking = thinking
+        self.eos = {eos_token_ids} if isinstance(eos_token_ids, int) else set(eos_token_ids)
+        self.stop_lengths = [None] * batch_size
+        self.stop_kinds = [None] * batch_size
+        self.eos_seen = [False] * batch_size
+        self.token_text = {}
+
+    def should_check(self, row, token):
+        if self.stop_lengths[row] is not None or self.eos_seen[row]:
+            return False
+        if token in self.eos:
+            self.eos_seen[row] = True
+            return False
+        if token not in self.token_text:
+            self.token_text[token] = self.tokenizer.decode(
+                [token], skip_special_tokens=False, clean_up_tokenization_spaces=False)
+        # These ASCII characters must be present in the token completing a marker.
+        return '>' in self.token_text[token] or '}' in self.token_text[token]
+
+    def observe(self, row, generated):
+        text = self.tokenizer.decode(generated, skip_special_tokens=False,
+                                     clean_up_tokenization_spaces=False)
+        boundary = final_answer_boundary(text, self.thinking)
+        if boundary is not None and self.stop_lengths[row] is None:
+            self.stop_lengths[row] = len(generated)
+            self.stop_kinds[row] = boundary[1]
+
+    def __call__(self, input_ids, scores=None, **kwargs):
+        import torch
+        latest = input_ids[:, -1].tolist()
+        for row, token in enumerate(latest):
+            if self.should_check(row, token):
+                self.observe(row, input_ids[row, self.input_width:].tolist())
+        return torch.tensor([n is not None for n in self.stop_lengths],
+                            device=input_ids.device, dtype=torch.bool)
+
+
+def completion_length(sequence, input_width, eos_token_ids, max_new_tokens, final_answer_stop=None):
     """Slice the padded prompt; count through first EOS, excluding EOS/padding.
 
     Internal special tokens (e.g. generated thinking delimiters) count as tokens.
@@ -29,6 +124,18 @@ def completion_length(sequence, input_width, eos_token_ids, max_new_tokens):
     """
     generated = list(sequence[input_width:])
     eos = {eos_token_ids} if isinstance(eos_token_ids, int) else set(eos_token_ids)
+    first_eos = next((i for i, token in enumerate(generated) if token in eos), None)
+    if final_answer_stop is not None:
+        if not 0 < final_answer_stop <= len(generated):
+            raise ValueError('Invalid final-answer stop length.')
+        if first_eos is None or final_answer_stop <= first_eos:
+            return {
+                'token_ids': generated[:final_answer_stop],
+                'generated_tokens': final_answer_stop,
+                'generation_steps_including_eos': final_answer_stop,
+                'finish_reason': 'final_answer',
+                'hit_token_limit': False,
+            }
     for position, token in enumerate(generated):
         if token in eos:
             return {
@@ -74,6 +181,7 @@ def summarize(records):
         'max_generated_tokens': max(lengths),
         'total_generated_tokens': sum(lengths),
         'num_eos_terminated': len(ended),
+        'num_final_answer_terminated': sum(r['finish_reason'] == 'final_answer' for r in records),
         'num_hit_token_limit': capped,
         'token_limit_rate': capped / len(lengths),
         'mean_tokens_eos_terminated_only': statistics.mean(ended) if ended else None,
@@ -109,6 +217,8 @@ def parse_args():
     parser.add_argument('--max-new-tokens', type=int, default=4096)
     parser.add_argument('--temperature', type=float, default=1.0)
     parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--stop-at-final-answer', action='store_true',
+                        help='Stop each row at a completed answer block or boxed answer outside thinking; changes the length metric.')
     parser.add_argument('--cache-dir', default='./cache')
     parser.add_argument('--dtype', choices=['bfloat16', 'float16', 'float32'], default='bfloat16')
     parser.add_argument('--output-dir', type=Path,
@@ -123,7 +233,7 @@ def parse_args():
 
 def run_model(spec, questions, args, output_dir):
     import torch
-    from transformers import set_seed
+    from transformers import StoppingCriteriaList, set_seed
     from tqdm import tqdm
     from custom_eval.generation import _format_prompt
     from custom_eval.modeling import load_model_and_tokenizer
@@ -167,16 +277,22 @@ def run_model(spec, questions, args, output_dir):
             )
             if args.temperature > 0:
                 generation_args.update(temperature=args.temperature, top_p=.95, top_k=20)
+            stopper = None
+            if args.stop_at_final_answer:
+                stopper = FinalAnswerStopper(tokenizer, input_width, len(batch), spec.enable_thinking, eos_ids)
+                generation_args['stopping_criteria'] = StoppingCriteriaList([stopper])
             with torch.inference_mode():
                 outputs = model.generate(input_ids=input_ids, attention_mask=attention_mask, **generation_args)
             sequences = outputs.cpu().tolist()
-            for q, prompt, sequence in zip(batch, prompts, sequences):
-                measured = completion_length(sequence, input_width, eos_ids, args.max_new_tokens)
+            for row, (q, prompt, sequence) in enumerate(zip(batch, prompts, sequences)):
+                stop_length = stopper.stop_lengths[row] if stopper is not None else None
+                measured = completion_length(sequence, input_width, eos_ids, args.max_new_tokens, stop_length)
                 raw = tokenizer.decode(measured.pop('token_ids'), skip_special_tokens=True)
                 record = {
                     **q, 'prompt': prompt, **measured, 'raw_output': raw,
                     'has_closing_think_tag': '</think>' in raw,
                     'answer_tag_count': raw.count('<answer>'),
+                    'final_answer_stop_kind': stopper.stop_kinds[row] if stopper is not None else None,
                 }
                 stream.write(json.dumps(record, ensure_ascii=False) + '\n')
                 records.append(record)
@@ -229,6 +345,8 @@ def main():
                     'selection': f'First {args.num_samples} rows, no shuffle'},
         'questions_sha256': hashlib.sha256(json.dumps(questions, sort_keys=True).encode()).hexdigest(),
         'length_definition': 'Generated token IDs before the first EOS, excluding EOS and trailing batch padding; includes reasoning, answer and other generated special tokens.',
+        'stopping_policy': ('First completed answer block or balanced boxed answer outside thinking; count through the token completing the marker.'
+                            if args.stop_at_final_answer else 'Natural EOS or token budget.'),
         'censoring_note': 'Lengths are measured under max_new_tokens. Budget-limited responses may have continued; EOS-only means describe a selected subset.',
     }
     (output_dir / 'metadata.json').write_text(json.dumps(metadata, indent=2))
