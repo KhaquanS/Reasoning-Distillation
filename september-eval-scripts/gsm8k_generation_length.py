@@ -235,7 +235,7 @@ def run_model(spec, questions, args, output_dir):
     import torch
     from transformers import StoppingCriteriaList, set_seed
     from tqdm import tqdm
-    from custom_eval.generation import _format_prompt
+    from custom_eval.generation import TokenProgressCallback, _format_prompt
     from custom_eval.modeling import load_model_and_tokenizer
 
     print(f'\nLoading {spec.name}: {spec.checkpoint} / {spec.subfolder or "root"}', flush=True)
@@ -277,12 +277,45 @@ def run_model(spec, questions, args, output_dir):
             )
             if args.temperature > 0:
                 generation_args.update(temperature=args.temperature, top_p=.95, top_k=20)
+            
+            stopping_criteria = []
             stopper = None
+
             if args.stop_at_final_answer:
-                stopper = FinalAnswerStopper(tokenizer, input_width, len(batch), spec.enable_thinking, eos_ids)
-                generation_args['stopping_criteria'] = StoppingCriteriaList([stopper])
-            with torch.inference_mode():
-                outputs = model.generate(input_ids=input_ids, attention_mask=attention_mask, **generation_args)
+                stopper = FinalAnswerStopper(
+                    tokenizer,
+                    input_width,
+                    len(batch),
+                    spec.enable_thinking,
+                    eos_ids,
+                )
+                stopping_criteria.append(stopper)
+
+            progress_bar = tqdm(
+                total=args.max_new_tokens,
+                desc=f"Generating {len(batch)} questions",
+                unit="tok",
+                leave=False,
+            )
+            progress_callback = TokenProgressCallback(
+                progress_bar,
+                args.max_new_tokens,
+            )
+            stopping_criteria.append(progress_callback)
+
+            generation_args["stopping_criteria"] = StoppingCriteriaList(
+                stopping_criteria
+            )
+
+            try:
+                with torch.inference_mode():
+                    outputs = model.generate(
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        **generation_args,
+                    )
+            finally:
+                progress_callback.close()
             sequences = outputs.cpu().tolist()
             for row, (q, prompt, sequence) in enumerate(zip(batch, prompts, sequences)):
                 stop_length = stopper.stop_lengths[row] if stopper is not None else None
