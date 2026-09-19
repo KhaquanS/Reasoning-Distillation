@@ -342,6 +342,11 @@ def main():
                       f"output_dim={trainer.aligner.proj.out_features if hasattr(trainer.aligner.proj, 'out_features') else 'unknown'}")
             
         except Exception as e:
+            if args.method == "logit_kd":
+                raise RuntimeError(
+                    f"Failed to load logit KD checkpoint: {args.student_checkpoint}. "
+                    "Refusing to continue from fresh student weights."
+                ) from e
             print(f"❌ Failed to load checkpoint: {e}")
             print("⚠️  Starting from scratch with fresh model weights.")
             import traceback
