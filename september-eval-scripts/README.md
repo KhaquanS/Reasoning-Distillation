@@ -29,6 +29,41 @@ Set `PYTHON=/path/to/python` to select an interpreter. Each launcher invocation 
 
 For full benchmark splits, set `max_samples: null` in both YAML files. The default 1,000-example limit and sampling parameters match the earlier runs. All benchmarks receive 4,096 new tokens in both modes; ARC-C and HellaSwag previously used 1,024. Inspect thinking outputs for truncation before interpreting scores. `seed: 42` is retained, but the current runner does not seed model sampling, so it does not guarantee identical generated outputs between runs.
 
+## Logit KD versus ReasonDistill, reasoning only
+
+This comparison runs exactly two checkpoints from
+`Khaquan/qwen-khaquanS-distillations`:
+
+- `qwen-logitKD-final/qwen_logit_kd/epoch_1`
+- `qwen_reasondistill_final/epoch_1`
+
+Both use `enable_thinking: true`. The four benchmarks, dataset splits, sample
+limit, prompts, scoring, model-loading options, and generation settings match
+the September reasoning runs: GSM8K, MMLU (all subjects), ARC-Challenge, and
+HellaSwag (validation), up to 1,000 examples each, 4,096 new tokens, batch size 32,
+temperature 1.0, top-p 0.95, top-k 20, repetition penalty 1.0, and pass@1.
+The original benchmark order is retained. Neither a base model nor either
+continuation checkpoint is included. This produces eight result JSON files
+plus an index.
+
+Run on the CUDA instance using the existing evaluation environment:
+
+```bash
+# Optional small check, saved separately from the full run:
+bash september-eval-scripts/run_kd_comparison.sh --max-samples 2
+
+# Full comparison with the September sample limit:
+bash september-eval-scripts/run_kd_comparison.sh
+```
+
+Each invocation writes a fresh directory under
+`eval_outputs/september-kd-comparison/`, with results in its `think/` subdirectory.
+`PYTHON` and `EVAL_OUTPUT_ROOT` work as in the original launcher. The evaluation
+runner is unchanged, including its generation-seeding and dataset-fallback
+limitations described above. For the small check, confirm that examples come
+from the real datasets and that checkpoint loading reports no unintended
+missing weights before starting the full run.
+
 ## SAE and ReasonScore
 
 These artifacts are used during training, not loaded by `custom_eval` for checkpoint evaluation. The existing training configuration remains unchanged:

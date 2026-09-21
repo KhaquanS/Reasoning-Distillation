@@ -1,0 +1,49 @@
+# Two initial-stage checkpoints, reasoning mode only.
+# Generation and dataset settings match qwen_2B-think.yaml.
+models:
+  - name: qwen-logit-kd-epoch_1-think
+    checkpoint: Khaquan/qwen-khaquanS-distillations
+    subfolder: qwen-logitKD-final/qwen_logit_kd/epoch_1
+    trust_remote_code: true
+    dtype: bfloat16
+    device_map: auto
+    enable_thinking: true
+    model_type: qwen
+    strip_language_model_prefix: true
+
+  - name: qwen-reasondistill-final-epoch_1-think
+    checkpoint: Khaquan/qwen-khaquanS-distillations
+    subfolder: qwen_reasondistill_final/epoch_1
+    trust_remote_code: true
+    dtype: bfloat16
+    device_map: auto
+    enable_thinking: true
+    model_type: qwen
+    strip_language_model_prefix: true
+
+benchmarks:
+  - gsm8k
+  - mmlu
+  - arc-c
+  - hellaswag
+
+output_dir: ./eval_outputs/september-kd-comparison/think
+cache_dir: ./cache
+split: test
+max_samples: 1000
+seed: 42
+
+generation:
+  max_new_tokens: 4096
+  temperature: 1.0
+  top_p: 0.95
+  top_k: 20
+  repetition_penalty: 1.0
+  pass_at_k: 1
+  batch_size: 32
+
+benchmark_options:
+  mmlu:
+    subject: all
+  hellaswag:
+    split: validation
