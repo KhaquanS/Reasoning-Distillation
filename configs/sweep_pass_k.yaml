@@ -54,7 +54,7 @@ generation:
   pass_at_k: [2, 4, 8]
   num_samples: 8
   sample_batch_size: 1  # Samples per question per generate call; limits GPU memory.
-  batch_size: 4        # Questions per batch (4 simultaneous sequences here).
+  batch_size: 1        # Questions per batch; matches qwen_logit_kd_continue.yaml.
 
 benchmark_options:
   mmlu:

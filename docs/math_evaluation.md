@@ -25,7 +25,9 @@ MATH-500 and the existing benchmarks receive 4,096 new tokens. AIME receives
 No stop-after-box rule is added; EOS and the token budget retain their existing
 meaning. Token-limit rates are reported so capped reasoning can be inspected.
 
-The default question batch is 4, reduced to 1 for AIME. In the sweep,
+The question batch is 1 for every benchmark, matching the training microbatch
+in `configs/qwen_logit_kd_continue.yaml`. Gradient accumulation is not used in
+evaluation. In the sweep,
 `sample_batch_size: 1` generates one sample per question per call, making eight
 calls per question batch. This avoids multiplying GPU memory by eight. Increase
 these YAML values if the instance has sufficient memory. Batch size, sampling
