@@ -1,43 +1,21 @@
-"""MATH-500 benchmark."""
+"""The fixed 500-question test subset published by HuggingFaceH4."""
 
 from custom_eval.benchmarks.base import Benchmark, EvalExample
-from custom_eval.benchmarks.loaders import limit_examples, try_load_dataset
-from custom_eval.scoring import numeric_or_exact_match
+from custom_eval.benchmarks.loaders import load_required_dataset, limit_examples
+from custom_eval.math_scoring import math_equivalent, require_math_verify
 
 
 def load(cache_dir=None, split="test", max_samples=None, **_):
-    """Load MATH-500 dataset."""
-    ds, source = try_load_dataset(
-        [
-            {"path": "HuggingFaceH4/MATH-500", "splits": [split, "test"]},
-            {"path": "lighteval/MATH", "name": "all", "splits": [split, "test"]},
-        ],
-        cache_dir=cache_dir,
-        split=split,
-    )
-    
+    require_math_verify()
+    ds, source = load_required_dataset("HuggingFaceH4/MATH-500", 500, cache_dir, split)
     examples = []
-    if ds is not None:
-        for i, row in enumerate(ds):
-            question = row.get("problem") or row.get("question") or row.get("text")
-            answer = row.get("answer") or row.get("solution") or row.get("final_answer")
-            examples.append(
-                EvalExample(
-                    str(i),
-                    str(question),
-                    str(answer),
-                    {"source": source},
-                )
-            )
-    else:
-        # Fallback example
-        examples = [
-            EvalExample(
-                "math500_fallback_0",
-                "Compute 12 * 13.",
-                "156",
-                {"source": "embedded_fallback", "load_errors": source.get("errors", [])},
-            )
-        ]
-    
-    return Benchmark("math500", limit_examples(examples, max_samples), numeric_or_exact_match)
+    for row in ds:
+        if not row.get("problem") or row.get("answer") is None or not row.get("unique_id"):
+            raise ValueError("MATH-500 requires problem, answer, and unique_id fields.")
+        examples.append(EvalExample(
+            str(row["unique_id"]), row["problem"], str(row["answer"]),
+            {"source": source, "subject": row.get("subject"), "level": row.get("level")},
+        ))
+    if len({ex.id for ex in examples}) != len(examples):
+        raise ValueError("Duplicate MATH-500 problem IDs.")
+    return Benchmark("math500", limit_examples(examples, max_samples), math_equivalent)

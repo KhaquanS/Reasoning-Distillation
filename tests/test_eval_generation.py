@@ -40,6 +40,7 @@ with patch.dict(sys.modules):
                             'custom_eval/prompts/qwen_formatter.py')
     templates = load_module('custom_eval.prompts.templates',
                             'custom_eval/prompts/templates.py')
+    load_module('custom_eval.math_scoring', 'custom_eval/math_scoring.py')
     generation = load_module('custom_eval.generation', 'custom_eval/generation.py')
 
 

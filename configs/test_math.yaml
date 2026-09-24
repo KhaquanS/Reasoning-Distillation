@@ -1,0 +1,56 @@
+# All 500 MATH-500 and 30 AIME 2025 questions, reasoning mode, pass@1.
+# python -m custom_eval.run_eval --config configs/test_math.yaml
+models:
+  - name: qwen-3.5-2b-think
+    checkpoint: Qwen/Qwen3.5-2B
+    trust_remote_code: true
+    dtype: bfloat16
+    device_map: auto
+    enable_thinking: true
+    model_type: qwen
+    strip_language_model_prefix: false
+
+  - name: qwen-logit-kd-continue-epoch_1-think
+    checkpoint: Khaquan/qwen-khaquanS-distillations
+    subfolder: qwen-logitKD-final/qwen_logit_kd_continue/epoch_1
+    trust_remote_code: true
+    dtype: bfloat16
+    device_map: auto
+    enable_thinking: true
+    model_type: qwen
+    strip_language_model_prefix: true
+
+  - name: qwen-reasondistill-final-continue-epoch_1-think
+    checkpoint: Khaquan/qwen-khaquanS-distillations
+    subfolder: qwen_reasondistill_final_continue/epoch_1
+    trust_remote_code: true
+    dtype: bfloat16
+    device_map: auto
+    enable_thinking: true
+    model_type: qwen
+    strip_language_model_prefix: true
+
+benchmarks:
+  - math500
+  - aime25
+
+output_dir: ./eval_outputs/test_math
+cache_dir: ./cache
+split: test
+max_samples: null
+seed: 42
+require_real_data: true
+
+generation:
+  max_new_tokens: 4096
+  temperature: 1.0
+  top_p: 0.95
+  top_k: 20
+  repetition_penalty: 1.0
+  pass_at_k: 1
+  batch_size: 4
+
+benchmark_options:
+  aime25:
+    max_new_tokens: 16384
+    batch_size: 1

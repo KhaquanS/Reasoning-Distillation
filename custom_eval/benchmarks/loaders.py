@@ -5,6 +5,20 @@ from typing import Any, Dict, List, Optional, Tuple
 from datasets import load_dataset
 
 
+def load_required_dataset(path, expected_count, cache_dir=None, split="test"):
+    """Load a fixed benchmark; never substitute another split or toy examples."""
+    if split != "test":
+        raise ValueError(f"{path} must use its official test split.")
+    ds = load_dataset(path, split=split, cache_dir=cache_dir)
+    if len(ds) != expected_count:
+        raise ValueError(f"Expected {expected_count} examples from {path}, got {len(ds)}.")
+    return ds, {
+        "path": path, "split": split,
+        "fingerprint": getattr(ds, "_fingerprint", None),
+    }
+
+
+
 def try_load_dataset(
     candidates: List[Dict[str, Any]],
     cache_dir: Optional[str] = None,

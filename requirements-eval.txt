@@ -1,0 +1,2 @@
+# Additional scorer for the existing training/evaluation environment.
+math-verify==0.8.0

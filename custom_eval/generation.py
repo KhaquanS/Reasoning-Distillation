@@ -11,6 +11,7 @@ from tqdm import tqdm
 from transformers import PreTrainedModel, PreTrainedTokenizer, StoppingCriteria, StoppingCriteriaList
 
 from custom_eval.prompts.qwen_formatter import QwenChatFormatter
+from custom_eval.math_scoring import extract_boxed_answer
 
 @dataclass
 class GeneratedCandidate:
@@ -19,6 +20,8 @@ class GeneratedCandidate:
     raw_output: str
     final_response: str
     thinking_content: Optional[str] = None
+    generated_tokens: Optional[int] = None
+    hit_token_limit: Optional[bool] = None
 
 
 # ----------------------------------------------------------------------------
@@ -26,11 +29,8 @@ class GeneratedCandidate:
 # ----------------------------------------------------------------------------
 
 def extract_final_answer_from_boxed(text: str) -> Optional[str]:
-    """Extract answer from \boxed{} format."""
-    matches = re.findall(r"\\boxed\{([^{}]+)\}", text)
-    if matches:
-        return matches[-1].strip()
-    return None
+    """Extract the last balanced boxed answer, including nested LaTeX."""
+    return extract_boxed_answer(text)
 
 
 def extract_json_answer(text: str) -> Optional[str]:
@@ -59,6 +59,19 @@ def extract_final_response(
     """
     if not text:
         return ""
+
+    if benchmark_name in {"math500", "aime25"}:
+        # The opening think tag may be in the prompt. Do not score reasoning-only
+        # completions, including those truncated before a final answer.
+        if model_type == "qwen" and enable_thinking:
+            parts = re.split(r"</think\s*>", text, flags=re.IGNORECASE)
+            if len(parts) == 1:
+                return ""
+            text = parts[-1]
+        text = re.sub(r"<think\b[^>]*>.*?</think\s*>", "", text,
+                      flags=re.IGNORECASE | re.DOTALL)
+        text = re.split(r"<think\b[^>]*>", text, flags=re.IGNORECASE)[0]
+        return extract_boxed_answer(text) or ""
 
     # Remove thinking block only for Qwen models with thinking enabled
     if model_type == "qwen" and enable_thinking:
@@ -251,8 +264,17 @@ def generate_candidates_batch(
 
     # Decode and group candidates
     raw_outputs = []
+    output_lengths = []
+    limit_flags = []
     for out in output_ids:
         gen_tokens = out[input_width:]
+        token_list = gen_tokens.tolist() if hasattr(gen_tokens, "tolist") else list(gen_tokens)
+        eos = tokenizer.eos_token_id
+        eos_ids = set(eos if isinstance(eos, (list, tuple)) else [eos])
+        # Ignore EOS and batch padding when reporting answer length.
+        end = next((i for i, token in enumerate(token_list) if int(token) in eos_ids), len(gen_tokens))
+        output_lengths.append(end)
+        limit_flags.append(end == len(gen_tokens) and end >= max_new_tokens)
         raw = tokenizer.decode(gen_tokens, skip_special_tokens=True).strip()
         raw_outputs.append(raw)
 
@@ -282,6 +304,8 @@ def generate_candidates_batch(
                 raw_output=raw,
                 final_response=final_response,
                 thinking_content=thinking_content,
+                generated_tokens=output_lengths[i],
+                hit_token_limit=limit_flags[i],
             )
         )
 

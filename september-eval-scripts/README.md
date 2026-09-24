@@ -27,7 +27,7 @@ bash september-eval-scripts/run.sh no_think
 
 Set `PYTHON=/path/to/python` to select an interpreter. Each launcher invocation writes to a fresh directory under `eval_outputs/september/`, with separate `think` and `no_think` directories and indexes. Set `EVAL_OUTPUT_ROOT` to choose that parent directory. Avoid reusing it if you want to retain earlier results. The launcher accepts the eval CLI's additional options; an explicit `--output-dir` overrides mode separation, so prefer `EVAL_OUTPUT_ROOT`.
 
-For full benchmark splits, set `max_samples: null` in both YAML files. The default 1,000-example limit and sampling parameters match the earlier runs. All benchmarks receive 4,096 new tokens in both modes; ARC-C and HellaSwag previously used 1,024. Inspect thinking outputs for truncation before interpreting scores. `seed: 42` is retained, but the current runner does not seed model sampling, so it does not guarantee identical generated outputs between runs.
+For full benchmark splits, set `max_samples: null` in both YAML files. The default 1,000-example limit and sampling parameters match the earlier runs. All benchmarks receive 4,096 new tokens in both modes; ARC-C and HellaSwag previously used 1,024. Inspect thinking outputs for truncation before interpreting scores. `seed: 42` is retained. The runner now seeds each model/benchmark generation; historical September runs predate this change. Hardware, package versions, and batch layouts can still affect reproducibility.
 
 ## Logit KD versus ReasonDistill, reasoning only
 
@@ -58,8 +58,8 @@ bash september-eval-scripts/run_kd_comparison.sh
 
 Each invocation writes a fresh directory under
 `eval_outputs/september-kd-comparison/`, with results in its `think/` subdirectory.
-`PYTHON` and `EVAL_OUTPUT_ROOT` work as in the original launcher. The evaluation
-runner is unchanged, including its generation-seeding and dataset-fallback
+`PYTHON` and `EVAL_OUTPUT_ROOT` work as in the original launcher. It uses the shared evaluation
+runner, with the updated seeding behavior and dataset-fallback
 limitations described above. For the small check, confirm that examples come
 from the real datasets and that checkpoint loading reports no unintended
 missing weights before starting the full run.

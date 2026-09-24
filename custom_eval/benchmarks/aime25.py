@@ -1,43 +1,21 @@
-"""AIME 2025 benchmark."""
+"""AIME 2025 I and II: the 30 problems in math-ai/aime25, test split."""
 
 from custom_eval.benchmarks.base import Benchmark, EvalExample
-from custom_eval.benchmarks.loaders import limit_examples, try_load_dataset
-from custom_eval.scoring import numeric_or_exact_match
+from custom_eval.benchmarks.loaders import load_required_dataset, limit_examples
+from custom_eval.math_scoring import aime_exact_match, aime_integer
 
 
 def load(cache_dir=None, split="test", max_samples=None, **_):
-    """Load AIME 2025 dataset."""
-    ds, source = try_load_dataset(
-        [
-            {"path": "yentinglin/aime_2025", "splits": [split, "test", "train"]},
-            {"path": "Maxwell-Jia/AIME_2025", "splits": [split, "test", "train"]},
-        ],
-        cache_dir=cache_dir,
-        split=split,
-    )
-    
+    ds, source = load_required_dataset("math-ai/aime25", 30, cache_dir, split)
     examples = []
-    if ds is not None:
-        for i, row in enumerate(ds):
-            question = row.get("problem") or row.get("question") or row.get("prompt")
-            answer = row.get("answer") or row.get("final_answer")
-            examples.append(
-                EvalExample(
-                    str(i),
-                    str(question),
-                    str(answer),
-                    {"source": source},
-                )
-            )
-    else:
-        # Fallback example
-        examples = [
-            EvalExample(
-                "aime25_fallback_0",
-                "Find the least positive integer n such that n leaves a remainder of 1 when divided by 2 and 3.",
-                "1",
-                {"source": "embedded_fallback", "load_errors": source.get("errors", [])},
-            )
-        ]
-    
-    return Benchmark("aime25", limit_examples(examples, max_samples), numeric_or_exact_match)
+    for row in ds:
+        if not row.get("problem") or row.get("answer") is None or row.get("id") is None:
+            raise ValueError("AIME 2025 requires problem, answer, and id fields.")
+        if aime_integer(row["answer"]) is None:
+            raise ValueError(f"Invalid AIME gold answer for {row['id']}: {row['answer']!r}")
+        examples.append(EvalExample(
+            str(row["id"]), row["problem"], str(row["answer"]), {"source": source},
+        ))
+    if len({ex.id for ex in examples}) != len(examples):
+        raise ValueError("Duplicate AIME 2025 problem IDs.")
+    return Benchmark("aime25", limit_examples(examples, max_samples), aime_exact_match)

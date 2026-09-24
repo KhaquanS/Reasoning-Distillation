@@ -26,7 +26,10 @@ Respond with a JSON object like: {{"answer": "C"}}"""
 
 ARC_C_TEMPLATE = CHOICE_BASE_TEMPLATE
 
-AIME25_TEMPLATE = MATH_BASE_TEMPLATE
+AIME25_TEMPLATE = """{question}
+
+Please reason step by step, and put your final answer within \\boxed{{}}.
+The final answer must be a single integer between 0 and 999."""
 
 GPQA_TEMPLATE = CHOICE_BASE_TEMPLATE
 
@@ -34,7 +37,9 @@ GSM8K_TEMPLATE = MATH_BASE_TEMPLATE
 
 HELLASWAG_TEMPLATE = CHOICE_BASE_TEMPLATE
 
-MATH500_TEMPLATE = MATH_BASE_TEMPLATE
+MATH500_TEMPLATE = """{question}
+
+Please reason step by step, and put your final answer within \\boxed{{}}."""
 
 MMLU_TEMPLATE = CHOICE_BASE_TEMPLATE
 
