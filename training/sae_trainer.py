@@ -24,6 +24,7 @@ class SAETrainingConfig:
     teacher_model_id: str
     layer: int
     checkpoint_dir: str
+    model_subfolder: str | None = None
     max_length: int = 1024
     sequence_batch_size: int = 4
     token_batch_size: int = 4096
@@ -42,6 +43,7 @@ class SAETrainingConfig:
     log_every_steps: int = 50
     log_every_samples: int = 1000
     log_path: str | None = None
+    save_at_tokens: tuple[int, ...] | None = None
     num_workers: int = 0
     cache_dir: str | None = None
     max_samples: int | None = None
@@ -231,6 +233,8 @@ class SAETrainer:
         self.global_step = 0
         self.tokens_seen = 0
         self.samples_seen = 0
+        self.save_at_tokens = tuple(sorted(set(int(x) for x in (config.save_at_tokens or ()))))
+        self._saved_token_thresholds = set()
 
         self.optimizer = torch.optim.Adam(
             self.sae.parameters(),
@@ -321,6 +325,9 @@ class SAETrainer:
         self.global_step = int(trainer_state.get("global_step", 0))
         self.tokens_seen = int(trainer_state.get("tokens_seen", 0))
         self.samples_seen = int(trainer_state.get("samples_seen", 0))
+        self._saved_token_thresholds = {
+            threshold for threshold in self.save_at_tokens if threshold <= self.tokens_seen
+        }
 
     def train(self):
         loader = DataLoader(
@@ -433,6 +440,13 @@ class SAETrainer:
                         and self.global_step % self.config.save_every_steps == 0
                     ):
                         self._save_checkpoint(f"step_{self.global_step}")
+
+                    for threshold in self.save_at_tokens:
+                        if threshold in self._saved_token_thresholds:
+                            continue
+                        if tokens_start < threshold <= self.tokens_seen:
+                            self._save_checkpoint(f"token_{threshold}")
+                            self._saved_token_thresholds.add(threshold)
         finally:
             csv_logger.close()
             pbar.close()

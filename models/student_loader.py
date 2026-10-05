@@ -179,11 +179,16 @@ def load_student(model_id, device, dtype, cache_dir=None):
     return model
 
 
-def load_tokenizer(model_id, cache_dir=None):
+def load_tokenizer(model_id, cache_dir=None, subfolder=None):
+    kwargs = {
+        "trust_remote_code": True,
+        "cache_dir": cache_dir,
+    }
+    if subfolder:
+        kwargs["subfolder"] = subfolder
     tokenizer = AutoTokenizer.from_pretrained(
         model_id,
-        trust_remote_code=True,
-        cache_dir=cache_dir
+        **kwargs,
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token

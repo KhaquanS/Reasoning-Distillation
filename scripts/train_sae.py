@@ -38,11 +38,13 @@ OPTIONAL_CONFIG = {
     "log_every_steps": 50,
     "log_every_samples": 1000,
     "log_path": None,
+    "save_at_tokens": None,
     "num_workers": 0,
     "seed": 42,
     "dtype": "bfloat16",
     "trust_remote_code": True,
     "attn_implementation": None,
+    "model_subfolder": None,
     "resume_from": None,
 }
 
@@ -116,10 +118,17 @@ def parse_args():
     parser.add_argument("--log-every-steps", type=int, default=None)
     parser.add_argument("--log-every-samples", type=int, default=None)
     parser.add_argument("--log-path", type=str, default=None)
+    parser.add_argument("--save-at-tokens", type=int, nargs="+", default=None)
     parser.add_argument("--num-workers", type=int, default=None)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--dtype", choices=["float32", "float16", "bfloat16"], default=None)
     parser.add_argument("--attn-implementation", type=str, default=None)
+    parser.add_argument(
+        "--model-subfolder",
+        type=str,
+        default=None,
+        help="Optional Hugging Face repository subfolder containing the model checkpoint.",
+    )
     parser.add_argument("--resume-from", type=str, default=None)
 
     cli = parser.parse_args()
@@ -164,6 +173,9 @@ def _load_teacher(args, device, dtype):
     attn_implementation = _str_or_none(args.attn_implementation)
     if attn_implementation is not None:
         kwargs["attn_implementation"] = attn_implementation
+    model_subfolder = _str_or_none(args.model_subfolder)
+    if model_subfolder is not None:
+        kwargs["subfolder"] = model_subfolder
 
     if device == "cuda":
         kwargs["device_map"] = {"": 0}
@@ -184,7 +196,11 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     dtype = _torch_dtype(args.dtype, device)
 
-    tokenizer = load_tokenizer(args.teacher_model_id, cache_dir=args.cache_dir)
+    tokenizer = load_tokenizer(
+        args.teacher_model_id,
+        cache_dir=args.cache_dir,
+        subfolder=_str_or_none(args.model_subfolder),
+    )
     dataset = AMDeepSeekDataset(
         split="train",
         cache_dir=args.cache_dir,
@@ -198,10 +214,11 @@ def main():
         activation_dim=activation_dim,
         latent_dim=int(latent_dim),
         sparsity_coefficient=float(args.sparsity_coefficient),
-    ).to(device)
+    ).to(device=device, dtype=dtype)
 
     config = SAETrainingConfig(
         teacher_model_id=args.teacher_model_id,
+        model_subfolder=_str_or_none(args.model_subfolder),
         layer=args.layer,
         checkpoint_dir=args.checkpoint_dir,
         max_length=args.max_length,
@@ -222,6 +239,7 @@ def main():
         log_every_steps=args.log_every_steps,
         log_every_samples=args.log_every_samples,
         log_path=args.log_path,
+        save_at_tokens=tuple(args.save_at_tokens or ()),
         num_workers=args.num_workers,
         cache_dir=args.cache_dir,
         max_samples=args.max_samples,

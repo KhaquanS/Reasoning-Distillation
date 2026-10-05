@@ -1,0 +1,60 @@
+# Train a 16x SAE on the ReasonDistill student checkpoint.
+#
+# The model is loaded from the Hugging Face repository below.  The
+# model_subfolder points at the published epoch_1 student checkpoint and is
+# passed to both AutoModelForCausalLM and AutoTokenizer.
+#
+# Run:
+#   python scripts/train_sae.py --config configs/reasondistill_sae.yaml
+#
+# To resume SAE optimization from one of this run's SAE checkpoints, set:
+#   training.resume_from: ./checkpoints/reasondistill_sae_layer12_16x/step_1000
+
+experiment:
+  seed: 42
+
+model:
+  teacher_model_id: Khaquan/qwen-khaquanS-distillations
+  model_subfolder: qwen_reasondistill_final_continue/epoch_1
+  # Zero-indexed student transformer layer used for SAE activations.  This
+  # matches the ReasonDistill student alignment layer.
+  layer: 12
+  dtype: bfloat16
+  attn_implementation: null
+
+data:
+  dataset: amdeepseek
+  cache_dir: ./cache
+  max_samples: 300_000
+  max_length: 2048
+
+sae:
+  latent_dim: null
+  expansion_factor: 16
+  sparsity_coefficient: 5.0
+  sparsity_warmup_fraction: 0.05
+
+training:
+  # Safe starting point for a 32 GB GPU.  At max_length this is at most
+  # 16,384 tokens and approximately 1 GiB of bf16 SAE latent activations.
+  sequence_batch_size: 8
+  token_batch_size: 16_384
+  max_train_tokens: 500_000_000
+  lr: 2.0e-5
+  min_lr: 0.0
+  lr_decay_fraction: 0.20
+  weight_decay: 0.0
+  adam_betas: [0.9, 0.999]
+  max_grad_norm: 1.0
+  num_workers: 0
+  resume_from: null
+  # Save the only intermediate checkpoint at half of the 500M-token budget.
+  save_at_tokens: [250000000]
+
+logging:
+  checkpoint_dir: ./checkpoints/reasondistill_sae_layer12_16x
+  # Disable periodic step-based checkpoints; the trainer always saves final.
+  save_every_steps: 0
+  log_every_steps: 1000
+  log_every_samples: 1000
+  log_path: ./logs/reasondistill_sae_layer12_16x/sae_training_metrics.csv
