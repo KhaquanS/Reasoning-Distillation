@@ -13,6 +13,8 @@ class AveragedCSVLogger:
         self.target_rows_per_epoch = max(1, int(target_rows_per_epoch))
         self.log_interval = max(1, -(-steps_per_epoch // self.target_rows_per_epoch))
         self._loss_sum = 0.0
+        self._alignment_loss_sum = 0.0
+        self._alignment_loss_count = 0
         self._num_steps = 0
 
         mode = "a" if append and self.log_path.exists() else "w"
@@ -25,6 +27,7 @@ class AveragedCSVLogger:
                 "step_end",
                 "num_steps",
                 "avg_loss",
+                "avg_alignment_loss",
                 "lr",
             ],
         )
@@ -32,8 +35,11 @@ class AveragedCSVLogger:
             self._writer.writeheader()
             self._file.flush()
 
-    def add(self, epoch, step, loss, lr, force=False):
+    def add(self, epoch, step, loss, lr, alignment_loss=None, force=False):
         self._loss_sum += float(loss)
+        if alignment_loss is not None:
+            self._alignment_loss_sum += float(alignment_loss)
+            self._alignment_loss_count += 1
         self._num_steps += 1
 
         if self._num_steps < self.log_interval and not force:
@@ -41,16 +47,24 @@ class AveragedCSVLogger:
 
         step_end = step + 1
         step_start = step_end - self._num_steps + 1
+        avg_alignment_loss = (
+            self._alignment_loss_sum / self._alignment_loss_count
+            if self._alignment_loss_count
+            else ""
+        )
         self._writer.writerow({
             "epoch": epoch + 1,
             "step_start": step_start,
             "step_end": step_end,
             "num_steps": self._num_steps,
             "avg_loss": self._loss_sum / self._num_steps,
+            "avg_alignment_loss": avg_alignment_loss,
             "lr": lr,
         })
         self._file.flush()
         self._loss_sum = 0.0
+        self._alignment_loss_sum = 0.0
+        self._alignment_loss_count = 0
         self._num_steps = 0
 
     def close(self):

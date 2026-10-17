@@ -62,6 +62,8 @@ class ReasonDistillTrainer(BaseTrainer):
         # Alignment loss (selected SAE reasoning features)
         # The alignment_loss_fn uses self.aligner which we updated
         align_loss = self.alignment_loss_fn(s_hidden, t_hidden, attn_mask.float())
+        # Log the unweighted alignment objective separately from total_loss.
+        self.latest_alignment_loss = align_loss.detach().item()
 
         # KD loss
         kd_loss = kl_div_loss(

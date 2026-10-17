@@ -45,6 +45,8 @@ class BaseTrainer:
         self.scheduler = None
         self.start_epoch = 0
         self.global_step = 0  # counts optimizer steps (not batches), across epochs
+        # Scheme-specific trainers can expose additional metrics for logging.
+        self.latest_alignment_loss = None
 
     def _collate(self, batch):
         """Collate function for DataLoader."""
@@ -224,6 +226,7 @@ class BaseTrainer:
             batch = {k: v.to(self.config.device) for k, v in batch.items()}
 
             # Compute the scheme-specific loss
+            self.latest_alignment_loss = None
             loss = self._compute_loss(batch)
             raw_loss = loss.detach().item()
 
@@ -257,6 +260,7 @@ class BaseTrainer:
                 step=step,
                 loss=raw_loss,
                 lr=lr,
+                alignment_loss=self.latest_alignment_loss,
                 force=((step + 1) == len(loader)),
             )
 
