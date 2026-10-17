@@ -62,7 +62,7 @@ training:
 loss:
   temperature: 4.0
   alpha_kd: 0.30                   # Unchanged
-  alpha_align: 0.25                # INCREASED: stronger reasoning alignment
+  alpha_align: 0.30                # INCREASED: stronger reasoning alignment
   beta_ce: 0.75                    # DECREASED: reduce task loss dominance
 
 logging:

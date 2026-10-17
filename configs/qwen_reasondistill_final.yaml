@@ -59,7 +59,7 @@ training:
 loss:
   temperature: 4.0
   alpha_kd: 0.3
-  alpha_align: 0.1
+  alpha_align: 0.15
   beta_ce: 0.9
 
 logging:
