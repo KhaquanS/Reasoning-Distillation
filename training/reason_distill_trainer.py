@@ -43,7 +43,9 @@ class ReasonDistillTrainer(BaseTrainer):
                 attention_mask=attn_mask,
                 output_hidden_states=True
             )
-            t_hidden = t_out.hidden_states[self.config.teacher_align_layer]
+            # hidden_states[0] is the embedding output, so configured
+            # transformer layer L is stored at hidden_states[L + 1].
+            t_hidden = t_out.hidden_states[self.config.teacher_align_layer + 1]
             t_logits = t_out.logits
 
         # Student forward
@@ -52,7 +54,9 @@ class ReasonDistillTrainer(BaseTrainer):
             attention_mask=attn_mask,
             output_hidden_states=True
         )
-        s_hidden = s_out.hidden_states[self.config.student_align_layer]
+        # Keep the same zero-indexed transformer-layer convention as SAE
+        # training: layer L corresponds to hidden_states[L + 1].
+        s_hidden = s_out.hidden_states[self.config.student_align_layer + 1]
         s_logits = s_out.logits
 
         # Alignment loss (selected SAE reasoning features)

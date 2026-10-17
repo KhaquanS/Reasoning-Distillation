@@ -112,25 +112,25 @@ The top-k teacher feature indices come from `reasonscore.pt`, using the first
 
 ### 2.3 Hidden-state indexing warning
 
-The repository has two layer-index conventions that must be made explicit in
-every experiment:
+Configured transformer layers use one consistent convention throughout the
+repository:
 
 - `training/sae_trainer.py` converts the configured SAE layer to
   `hidden_states[layer + 1]` because hidden-state index 0 is the embedding.
-- `training/reason_distill_trainer.py` directly uses
-  `hidden_states[student_align_layer]`.
+- `training/reason_distill_trainer.py` converts both configured alignment
+  layers to `hidden_states[layer + 1]` for the same reason.
 
 Therefore, an implementation must record both:
 
 ```yaml
 student_configured_layer: 12
-student_hidden_state_index: 13       # used by the current SAE trainer
-reason_distill_aligner_state_index: 12 # used by the current training loss
+student_hidden_state_index: 13       # used by SAE training and ReasonDistill
+reason_distill_aligner_state_index: 13
 ```
 
-Before running experiments, verify which hidden-state index was used to train
-the specific student SAE. Do not compare SAE features to the ReasoningFeatureHead
-without recording this possible one-index offset.
+Record the configured transformer layer and derived hidden-state index in every
+experiment. Do not compare SAE features to the ReasoningFeatureHead without
+recording that index.
 
 ### 2.4 Student SAE versus ReasoningFeatureHead
 
